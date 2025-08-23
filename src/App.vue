@@ -6,7 +6,7 @@ const email = ref('');
 const password = ref('');
 
 // The URL of your live backend API on Render
-const API_URL = 'https://showdown-backend.onrender.com';
+const API_URL = 'http://localhost:3001';
 
 async function handleLogin() {
   console.log('1. handleLogin function CALLED.');
