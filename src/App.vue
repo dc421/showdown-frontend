@@ -6,10 +6,16 @@ const email = ref('');
 const password = ref('');
 
 // The URL of your live backend API on Render
-const API_URL = 'https://showdown-backend.onrender.com'; // Replace with your actual Render URL if different
+const API_URL = 'https://showdown-backend.onrender.com';
 
 async function handleLogin() {
+  console.log('1. handleLogin function CALLED.');
+
   try {
+    console.log('2. INSIDE try block. Preparing to fetch...');
+    console.log('3. API URL is:', API_URL);
+    console.log('4. Sending body:', JSON.stringify({ email: email.value, password: password.value }));
+
     const response = await fetch(`${API_URL}/api/login`, {
       method: 'POST',
       headers: {
@@ -21,20 +27,19 @@ async function handleLogin() {
       }),
     });
 
+    console.log('5. FETCH command completed. Response status:', response.status);
+
     const data = await response.json();
 
     if (!response.ok) {
-      // If the server response is not 2xx, throw an error
       throw new Error(data.message || 'Login failed');
     }
 
-    // On successful login, we get a token back
-    console.log('Login successful! Token:', data.token);
+    console.log('6. SUCCESS! Token:', data.token);
     alert('Login successful! Check the console for your token.');
-    // In the next step, we will store this token and redirect the user.
 
   } catch (error) {
-    console.error('Error during login:', error);
+    console.error('7. ERROR caught in catch block:', error);
     alert(`Login failed: ${error.message}`);
   }
 }
