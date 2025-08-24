@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue';
 import { useAuthStore } from '@/stores/auth';
+import { RouterLink } from 'vue-router';
 
 const authStore = useAuthStore();
 const email = ref('');
@@ -26,6 +27,9 @@ async function handleLogin() {
         </div>
         <button type="submit">Login</button>
       </form>
+      <p class="sub-link">
+        Don't have an account? <RouterLink to="/register">Sign Up</RouterLink>
+      </p>
     </div>
   </div>
 </template>
@@ -86,6 +90,7 @@ button {
   cursor: pointer;
   transition: background-color 0.2s;
 }
+.sub-link { text-align: center; margin-top: 1rem; }
 
 button:hover {
   background-color: #166fe5;

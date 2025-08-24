@@ -5,7 +5,9 @@ import LoginView from '../views/LoginView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import RosterBuilderView from '../views/RosterBuilderView.vue' // <-- IMPORT NEW VIEW
 import GameView from '../views/GameView.vue' // <-- IMPORT NEW VIEW
-
+import SetLineupView from '../views/SetLineupView.vue';
+import RegisterView from '../views/RegisterView.vue';
+import GameSetupView from '../views/GameSetupView.vue';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -14,6 +16,11 @@ const router = createRouter({
       path: '/login',
       name: 'login',
       component: LoginView
+    },
+    {
+      path: '/register',
+      name: 'register',
+      component: RegisterView
     },
     {
       path: '/dashboard',
@@ -32,6 +39,18 @@ const router = createRouter({
       path: '/game/:id',
       name: 'game',
       component: GameView,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/game/:id/setup',
+      name: 'game-setup',
+      component: GameSetupView,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/game/:id/lineup',
+      name: 'set-lineup',
+      component: SetLineupView,
       meta: { requiresAuth: true }
     },
     {
