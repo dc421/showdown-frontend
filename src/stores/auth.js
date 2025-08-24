@@ -116,6 +116,7 @@ export const useAuthStore = defineStore('auth', () => {
   return { 
     token, user, rosters, allPlayers,
     isAuthenticated, login, logout, fetchRosters, 
-    fetchAllPlayers, createRoster 
+    fetchAllPlayers, createRoster, 
+    API_URL
   }
 })
