@@ -11,7 +11,7 @@ export const useAuthStore = defineStore('auth', () => {
   const allPlayers = ref([]) // <-- ADD NEW STATE
 
   
-  const API_URL = 'https://showdown-backend.onrender.com';
+  const API_URL = import.meta.env.VITE_API_URL;
 
   // --- GETTERS ---
   const isAuthenticated = computed(() => !!token.value)
