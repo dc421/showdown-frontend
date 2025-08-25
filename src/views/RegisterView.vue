@@ -4,13 +4,11 @@ import { useAuthStore } from '@/stores/auth';
 import { RouterLink } from 'vue-router';
 
 const authStore = useAuthStore();
-const username = ref('');
 const email = ref('');
 const password = ref('');
 
 async function handleRegister() {
   await authStore.register({ 
-    username: username.value, 
     email: email.value, 
     password: password.value 
   });
@@ -22,10 +20,6 @@ async function handleRegister() {
     <div class="form-container">
       <h1>Create Account</h1>
       <form @submit.prevent="handleRegister">
-        <div class="form-group">
-          <label for="username">Username</label>
-          <input type="text" id="username" v-model="username" required />
-        </div>
         <div class="form-group">
           <label for="email">Email</label>
           <input type="email" id="email" v-model="email" required />
@@ -44,7 +38,6 @@ async function handleRegister() {
 </template>
 
 <style scoped>
-/* You can copy the styles from LoginView.vue and add a .sub-link style */
 #app-container { display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f0f2f5; }
 .form-container { padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
 h1 { text-align: center; margin-bottom: 1.5rem; }

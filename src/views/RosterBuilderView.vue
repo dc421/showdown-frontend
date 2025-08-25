@@ -1,105 +1,142 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { useAuthStore } from '@/stores/auth';
+import { useRouter } from 'vue-router';
 
 const authStore = useAuthStore();
+const router = useRouter();
 
+// --- STATE ---
 const newRosterName = ref('');
-const selectedPlayers = ref([]);
-const benchPlayerIds = ref(new Set());
+const filterPosition = ref('ALL');
+const draggedItem = ref(null);
 
-const playerCount = computed(() => selectedPlayers.value.length);
+const roster = ref({
+  lineup: { C: null, '1B': null, '2B': null, SS: null, '3B': null, LF: null, CF: null, RF: null, DH: null },
+  pitchingStaff: [],
+  bench: [],
+});
 
-const starters = computed(() => selectedPlayers.value.filter(p => !benchPlayerIds.value.has(p.card_id)));
-const startingPitchers = computed(() => starters.value.filter(p => Number(p.ip) > 3));
-const positionPlayers = computed(() => starters.value.filter(p => !(Number(p.ip) > 3)));
+// --- COMPUTED PROPERTIES ---
+const allPlayersOnRoster = computed(() => [
+    ...Object.values(roster.value.lineup).filter(p => p),
+    ...roster.value.pitchingStaff,
+    ...roster.value.bench
+]);
+const playerCount = computed(() => allPlayersOnRoster.value.length);
+
+const availablePlayers = computed(() => {
+  return authStore.allPlayers
+    .filter(p => !allPlayersOnRoster.value.some(rp => rp.card_id === p.card_id))
+    .filter(p => {
+        if (filterPosition.value === 'ALL') return true;
+        if (filterPosition.value === 'SP') return p.displayPosition === 'SP';
+        if (filterPosition.value === 'RP') return p.displayPosition === 'RP';
+        if (filterPosition.value === 'P') return p.control !== null;
+        if (filterPosition.value === 'DH') return p.displayPosition === 'DH';
+        
+        // This is the corrected part for position players
+        if (p.control !== null) return false; // Not a position player
+        const playerPositions = p.fielding_ratings ? Object.keys(p.fielding_ratings) : [];
+        if (filterPosition.value === 'LF/RF') return playerPositions.includes('LF') || playerPositions.includes('RF');
+        return playerPositions.includes(filterPosition.value);
+    })
+    .sort((a, b) => (b.points || 0) - (a.points || 0));
+});
+
+const starters = computed(() => [
+    ...Object.values(roster.value.lineup).filter(p => p),
+    ...roster.value.pitchingStaff.filter(p => p.displayPosition === 'SP')
+]);
+const starterPlayerIds = computed(() => new Set(starters.value.map(p => p.card_id)));
 
 const totalPoints = computed(() => {
-  return selectedPlayers.value.reduce((sum, player) => {
-    const isBenched = benchPlayerIds.value.has(player.card_id);
-    const cost = (isBenched && player.control === null) ? Math.round(player.points / 5) : player.points;
+  return allPlayersOnRoster.value.reduce((sum, player) => {
+    const isStarter = starterPlayerIds.value.has(player.card_id);
+    const cost = isStarter ? player.points : Math.round(player.points / 5);
     return sum + cost;
   }, 0);
 });
 
-const positionCoverage = computed(() => {
-    const coverage = { C: 0, '2B': 0, SS: 0, '3B': 0, CF: 0, LFRF: 0 };
-    positionPlayers.value.forEach(p => {
-        if (p.positions?.includes('C')) coverage.C++;
-        if (p.positions?.includes('2B')) coverage['2B']++;
-        if (p.positions?.includes('SS')) coverage.SS++;
-        if (p.positions?.includes('3B')) coverage['3B']++;
-        if (p.positions?.includes('CF')) coverage.CF++;
-        if (p.positions?.includes('LF') || p.positions?.includes('RF')) coverage.LFRF++;
-    });
-    return {
-        ...coverage,
-        SP: startingPitchers.value.length,
-        PosPlayers: positionPlayers.value.length
-    };
-});
+const startingPitchersOnRoster = computed(() => roster.value.pitchingStaff.filter(p => p.displayPosition === 'SP'));
+const bullpenOnRoster = computed(() => roster.value.pitchingStaff.filter(p => p.displayPosition === 'RP'));
+const benchPlayers = computed(() => roster.value.bench);
+const lineupPlayers = computed(() => Object.values(roster.value.lineup).filter(p => p));
 
-const isRosterValid = computed(() => {
-    return playerCount.value === 20 &&
-           totalPoints.value <= 5000 &&
-           positionCoverage.value.SP === 4 &&
-           positionCoverage.value.PosPlayers >= 9 &&
-           positionCoverage.value.C >= 1 &&
-           positionCoverage.value['2B'] >= 1 &&
-           positionCoverage.value.SS >= 1 &&
-           positionCoverage.value['3B'] >= 1 &&
-           positionCoverage.value.CF >= 1 &&
-           positionCoverage.value.LFRF >= 2;
-});
 
-function handlePlayerClick(player) {
-  if (isPlayerSelected(player)) {
-    removePlayer(player);
-  } else {
-    addPlayer(player);
+// --- METHODS ---
+function onDragStart(event, player, from, originalPosition = null) {
+  draggedItem.value = { player, from, originalPosition };
+  event.dataTransfer.effectAllowed = 'move';
+}
+
+function onDrop(event, to, targetPosition = null) {
+  if (!draggedItem.value) return;
+  const { player, from } = draggedItem.value;
+  const playerFromRoster = from !== 'available';
+
+  if (playerCount.value >= 20 && !playerFromRoster) {
+    draggedItem.value = null; return;
   }
+  
+  if (playerFromRoster) removePlayer(player);
+
+  if (to === 'lineup') {
+    if (player.control !== null) { if(playerFromRoster) addPlayer(player); draggedItem.value = null; return; }
+    const existingPlayer = roster.value.lineup[targetPosition];
+    if (existingPlayer) {
+        removePlayer(existingPlayer);
+        addPlayer(existingPlayer);
+    }
+    roster.value.lineup[targetPosition] = player;
+  } else if (to === 'pitchingStaff') {
+    if(player.control === null) { if(playerFromRoster) addPlayer(player); draggedItem.value = null; return; }
+    roster.value.pitchingStaff.push(player);
+  } else if (to === 'bench') {
+     if(player.control !== null) { if(playerFromRoster) addPlayer(player); draggedItem.value = null; return; }
+    roster.value.bench.push(player);
+  } else if (from === 'available') {
+      addPlayer(player);
+  }
+  
+  draggedItem.value = null;
 }
 
 function addPlayer(player) {
-  if (playerCount.value >= 20) return;
-  if (selectedPlayers.value.some(p => p.name === player.name)) {
-      alert(`${player.name} is already on your roster.`);
-      return;
+  if (allPlayersOnRoster.value.some(p => p.name === player.name)) return;
+
+  if (player.control !== null) {
+    roster.value.pitchingStaff.push(player);
+  } else {
+    const p_pos = player.fielding_ratings ? Object.keys(player.fielding_ratings) : [];
+    const preferredOrder = ['C', 'SS', '2B', '3B', 'CF', 'LF', 'RF', '1B', 'DH'];
+    let placed = false;
+    for (const pos of preferredOrder) {
+      if (!roster.value.lineup[pos] && p_pos.includes(pos)) {
+        roster.value.lineup[pos] = player;
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) roster.value.bench.push(player);
   }
-  selectedPlayers.value.push(player);
 }
 
 function removePlayer(playerToRemove) {
-  selectedPlayers.value = selectedPlayers.value.filter(p => p.card_id !== playerToRemove.card_id);
-  benchPlayerIds.value.delete(playerToRemove.card_id);
-}
-
-function isPlayerSelected(player) {
-    return selectedPlayers.value.some(p => p.card_id === player.card_id);
-}
-
-function toggleBench(playerId) {
-    if (benchPlayerIds.value.has(playerId)) {
-        benchPlayerIds.value.delete(playerId);
-    } else {
-        benchPlayerIds.value.add(playerId);
+    roster.value.pitchingStaff = roster.value.pitchingStaff.filter(p => p.card_id !== playerToRemove.card_id);
+    roster.value.bench = roster.value.bench.filter(p => p.card_id !== playerToRemove.card_id);
+    for (const pos in roster.value.lineup) {
+        if (roster.value.lineup[pos]?.card_id === playerToRemove.card_id) {
+            roster.value.lineup[pos] = null;
+        }
     }
 }
 
 async function saveRoster() {
-  const fullPointTotal = selectedPlayers.value.reduce((sum, player) => sum + player.points, 0);
-  if (fullPointTotal > 5000) {
-      return alert(`Your roster is over the 5000 point limit at full value. Total: ${fullPointTotal}`);
-  }
-  if (!newRosterName.value) {
-    return alert('Please enter a name for your roster.');
-  }
-  if (!isRosterValid.value) {
-      return alert('Your roster is not valid. Please check the position and starter requirements.');
-  }
   const rosterData = {
     roster_name: newRosterName.value,
-    card_ids: selectedPlayers.value.map(p => p.card_id)
+    card_ids: allPlayersOnRoster.value.map(p => p.card_id),
+    starter_ids: Array.from(starterPlayerIds.value)
   };
   await authStore.createRoster(rosterData);
 }
@@ -113,86 +150,107 @@ onMounted(() => {
 
 <template>
   <div class="builder-container">
-    <div class="panel">
-      <h2>Available Players</h2>
-      <div class="player-list">
+    <div class="available-players-section panel">
+      <div class="panel-header">
+      <div class="debug-panel">
+        <strong>Debug: {{ authStore.allPlayers.length }} players loaded from store.</strong>
+      </div>
+        <h2>Available Players</h2>
+        <select v-model="filterPosition">
+          <option value="ALL">All Positions</option>
+          <option value="SP">SP</option>
+          <option value="RP">RP</option>
+          <option value="C">C</option>
+          <option value="1B">1B</option>
+          <option value="2B">2B</option>
+          <option value="SS">SS</option>
+          <option value="3B">3B</option>
+          <option value="LF/RF">LF/RF</option>
+          <option value="CF">CF</option>
+          <option value="DH">DH-Only</option>
+        </select>
+      </div>
+      <div class="player-list drop-zone" @dragover.prevent @drop="removePlayer(draggedItem.player)">
         <div 
-          v-for="player in authStore.allPlayers" 
+          v-for="player in availablePlayers" 
           :key="player.card_id"
           class="player-item"
-          :class="{ 'selected': isPlayerSelected(player) }"
-          @click="handlePlayerClick(player)">
+          draggable="true"
+          @dragstart="onDragStart($event, player, 'available')">
           <span>{{ player.displayName }} ({{ player.displayPosition }})</span>
           <span>{{ player.points }} pts</span>
         </div>
       </div>
     </div>
-
-    <div class="panel">
-        <h2>Your Roster ({{ playerCount }} / 20)</h2>
-        <div class="player-list selected-players-list">
-         <div v-for="player in selectedPlayers" :key="player.card_id" class="player-item selected-item">
-            <span class="player-name">{{ player.displayName }} ({{ player.displayPosition }})</span>
-            <div>
-                <label class="bench-toggle" v-if="player.control === null">
-                    <input type="checkbox" @change="toggleBench(player.card_id)" />
-                    Bench ({{ Math.round(player.points / 5) }} pts)
-                </label>
-                <button @click="removePlayer(player)" class="remove-btn">X</button>
+    
+    <div class="roster-section">
+        <div class="roster-header">
+            <input type="text" v-model="newRosterName" placeholder="Enter Roster Name..." />
+            <div class="roster-stats">
+                <span>Players: {{ playerCount }} / 20</span>
+                <span :class="{ 'over-limit': totalPoints > 5000 }">Points: {{ totalPoints }} / 5000</span>
             </div>
-         </div>
-      </div>
-    </div>
-
-    <div class="panel info-panel">
-      <h2>Roster Info</h2>
-      <input type="text" v-model="newRosterName" placeholder="Enter Roster Name" />
-      <div class="roster-stats">
-        <span :class="{ 'over-limit': totalPoints > 5000 }">
-          Discounted Points: {{ totalPoints }} / 5000
-        </span>
-      </div>
-      
-      <div class="checklist">
-          <h3>Starters Checklist ({{ starters.length }} players)</h3>
-          <p :class="{ 'filled': positionCoverage.PosPlayers >= 9 }">Position Players ({{ positionCoverage.PosPlayers }}/9)</p>
-          <hr/>
-          <p :class="{ 'filled': positionCoverage.C >= 1 }">Catcher (1)</p>
-          <p class="filled">1st Base (any)</p>
-          <p :class="{ 'filled': positionCoverage['2B'] >= 1 }">2nd Base (1)</p>
-          <p :class="{ 'filled': positionCoverage.SS >= 1 }">Shortstop (1)</p>
-          <p :class="{ 'filled': positionCoverage['3B'] >= 1 }">3rd Base (1)</p>
-          <p :class="{ 'filled': positionCoverage.CF >= 1 }">Center Field (1)</p>
-          <p :class="{ 'filled': positionCoverage.LFRF >= 2 }">LF/RF (2)</p>
-          <p class="filled">DH (any)</p>
-          <hr/>
-          <p :class="{ 'filled': positionCoverage.SP === 4 }">Starting Pitchers ({{ positionCoverage.SP }}/4)</p>
-      </div>
-      <button @click="saveRoster" :disabled="!isRosterValid">Save Roster</button>
+            <button @click="saveRoster">Save Roster</button>
+        </div>
+        <div class="roster-grid">
+            <div class="lineup-panel">
+                <h3>Starting Lineup ({{ lineupPlayers.length }}/9)</h3>
+                <div class="lineup-grid-positions">
+                    <div v-for="(player, pos) in roster.lineup" :key="pos" class="lineup-position drop-zone" @dragover.prevent @drop="onDrop($event, 'lineup', pos)">
+                        <strong>{{ pos }}:</strong>
+                        <div v-if="player" class="player-chip" draggable="true" @dragstart="onDragStart($event, player, 'lineup', pos)" @click="removePlayer(player)">
+                            {{ player.displayName }} <small>({{player.displayPosition}} | {{player.points}} pts)</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="staff-panel">
+                <h3>Pitching Staff ({{ roster.pitchingStaff.length }})</h3>
+                <div class="staff-area">
+                  <strong>Starting Pitchers ({{ startingPitchersOnRoster.length }}/4):</strong>
+                  <div class="bench-area drop-zone" @dragover.prevent @drop="onDrop($event, 'pitchingStaff')">
+                      <div v-for="p in startingPitchersOnRoster" :key="p.card_id" class="player-chip" draggable="true" @dragstart="onDragStart($event, p, 'pitchingStaff')" @click="removePlayer(p)">
+                        {{ p.displayName }} <small>({{p.displayPosition}} | {{p.points}} pts)</small>
+                      </div>
+                  </div>
+                  <strong>Bullpen ({{ bullpenOnRoster.length }}):</strong>
+                  <div class="bench-area drop-zone" @dragover.prevent @drop="onDrop($event, 'pitchingStaff')">
+                      <div v-for="p in bullpenOnRoster" :key="p.card_id" class="player-chip" draggable="true" @dragstart="onDragStart($event, p, 'pitchingStaff')" @click="removePlayer(p)">
+                        {{ p.displayName }} <small>({{p.displayPosition}} | {{p.points}} pts)</small>
+                      </div>
+                  </div>
+                </div>
+                <h3>Bench ({{ benchPlayers.length }})</h3>
+                <div class="bench-area drop-zone" @dragover.prevent @drop="onDrop($event, 'bench')">
+                    <div v-for="p in benchPlayers" :key="p.card_id" class="player-chip" draggable="true" @dragstart="onDragStart($event, p, 'bench')" @click="removePlayer(p)">
+                      {{ p.displayName }} <small>({{p.displayPosition}} | {{p.points}} pts)</small>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-    .builder-container { display: grid; grid-template-columns: 1.2fr 1.2fr 1fr; gap: 1.5rem; padding: 1.5rem; height: 100vh; box-sizing: border-box; font-family: sans-serif; }
-    .panel { display: flex; flex-direction: column; background: #f4f6f8; padding: 1rem; border-radius: 8px; overflow: hidden; }
-    .player-list { flex-grow: 1; overflow-y: auto; border: 1px solid #ddd; background: white; border-radius: 4px; }
-    .player-item { display: flex; justify-content: space-between; padding: 0.5rem 0.75rem; cursor: pointer; border-bottom: 1px solid #eee; transition: background-color 0.15s ease-in-out; font-size: 0.9em; }
-    .player-item:hover { background-color: #eef8ff; }
-    .player-item.selected { background-color: #e9ecef; color: #adb5bd; opacity: 0.6; } /* removed not-allowed cursor */
-    .selected-item { display: flex; justify-content: space-between; align-items: center; }
-    .player-name { cursor: default; }
-    .remove-btn { background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 8px; padding: 2px 6px; }
-    .bench-toggle { font-size: 0.8em; color: #666; }
-    .info-panel { background-color: #e9ecef; }
-    .info-panel input { padding: 0.75rem; font-size: 1rem; margin-bottom: 1rem; border: 1px solid #ccc; border-radius: 4px; }
-    .roster-stats { font-weight: bold; font-size: 1.1rem; text-align: center; margin-bottom: 1rem; }
-    .checklist { background: #fff; padding: 1rem; margin-bottom: 1rem; border-radius: 4px; }
-    .checklist h3 { margin: 0.5rem 0; }
-    .checklist p { margin: 0.25rem 0; color: #888; transition: color 0.2s; }
-    .checklist p.filled { color: #28a745; font-weight: bold; }
-    hr { border: none; border-top: 1px solid #ddd; margin: 0.5rem 0; }
-    .over-limit { color: #dc3545; }
-    button { margin-top: auto; padding: 0.75rem; font-size: 1.1rem; cursor: pointer; border: none; border-radius: 4px; background-color: #007bff; color: white; font-weight: bold; }
-    button:disabled { background-color: #6c757d; cursor: not-allowed; }
+.builder-container { display: grid; grid-template-columns: 400px 1fr; grid-template-rows: auto 1fr; gap: 1rem; padding: 1rem; height: calc(100vh - 50px); box-sizing: border-box; }
+.available-players-section { grid-row: 1 / 3; display: flex; flex-direction: column; background: #f4f6f8; padding: 1rem; border-radius: 8px; overflow: hidden; }
+.roster-section { grid-row: 1 / 3; display: flex; flex-direction: column; }
+.panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.player-list { flex-grow: 1; overflow-y: auto; border: 1px solid #ddd; background: white; border-radius: 4px; }
+.player-item { display: flex; justify-content: space-between; padding: 0.5rem; cursor: pointer; border-bottom: 1px solid #eee; }
+.roster-header { display: flex; gap: 1rem; align-items: center; background: #e9ecef; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;}
+.roster-header input { flex-grow: 1; padding: 0.75rem; font-size: 1.1rem; }
+.roster-stats { font-weight: bold; text-align: center; white-space: nowrap; }
+.roster-grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 1rem; flex-grow: 1; overflow-y: auto; }
+.lineup-panel, .staff-panel { background: #f4f6f8; padding: 1rem; border-radius: 8px; display: flex; flex-direction: column; }
+.lineup-grid-positions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem; }
+.lineup-position { padding: 0.5rem; border: 1px dashed #ccc; border-radius: 4px; min-height: 50px; font-size: 0.9em; }
+.staff-area { flex-grow: 1; display: flex; flex-direction: column; gap: 0.5rem; }
+.bench-area { border: 1px dashed #ccc; border-radius: 4px; padding: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-content: flex-start; min-height: 50px; }
+.player-chip { background-color: #dee2e6; padding: 0.25rem 0.5rem; border-radius: 12px; cursor: grab; font-size: 0.85em; }
+.player-chip:hover { background-color: #ffdddd; }
+.player-chip small { color: #495057; }
+.over-limit { color: #dc3545; }
+.drop-zone:hover { border-color: #007bff; }
 </style>

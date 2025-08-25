@@ -1,118 +1,254 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue';
-import { useRoute } from 'vue-router';
+import { ref, onMounted, computed, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { useGameStore } from '@/stores/game';
+import { socket } from '@/services/socket';
 
 const authStore = useAuthStore();
+const gameStore = useGameStore();
 const route = useRoute();
+const router = useRouter();
 const gameId = route.params.id;
 
-// Local state for building the lineup
 const startingPitcher = ref(null);
-const battingOrder = ref([]);
+const battingOrder = ref([]); 
+const useDh = computed(() => gameStore.game?.use_dh !== false);
 
-const nonPitchers = computed(() => authStore.activeRosterCards.filter(p => !p.control));
-const pitchers = computed(() => authStore.activeRosterCards.filter(p => p.control));
+const defensivePositions = computed(() => {
+  const positions = ['C', '1B', '2B', 'SS', '3B', 'LF', 'CF', 'RF'];
+  if (useDh.value) {
+    positions.push('DH');
+  }
+  return positions;
+});
 
-function setPitcher(pitcher) {
-  startingPitcher.value = pitcher;
+const starters = computed(() => authStore.activeRosterCards.filter(p => p.is_starter));
+const startingPitchers = computed(() => starters.value.filter(p => p.displayPosition === 'SP'));
+const positionPlayers = computed(() => starters.value.filter(p => p.displayPosition !== 'SP' && p.displayPosition !== 'RP'));
+
+const missingPositions = computed(() => {
+    const required = new Set(defensivePositions.value);
+    const assigned = new Set(battingOrder.value.map(p => p.position));
+    return [...required].filter(pos => !assigned.has(pos));
+});
+
+const availableBatters = computed(() => {
+  return positionPlayers.value.filter(p => !battingOrder.value.some(bo => bo.player.card_id === p.card_id));
+});
+
+function isPlayerEligibleForPosition(player, position) {
+    if (!player || !position) return false;
+    if (player.displayPosition === 'SP' || player.displayPosition === 'RP') return position === 'P';
+    if (position === '1B' || (position === 'DH' && useDh.value)) return true;
+    const playerPositions = player.fielding_ratings ? player.fielding_ratings.split(',') : [];
+    if (position === 'LF' || position === 'RF') return playerPositions.includes('LF') || playerPositions.includes('RF') || playerPositions.includes('LFRF');
+    return playerPositions.includes(position);
 }
+
+// --- NEW: Computed property to find duplicate positions ---
+const duplicatePositions = computed(() => {
+    const positions = battingOrder.value.map(spot => spot.position).filter(pos => pos);
+    const positionCounts = positions.reduce((acc, pos) => {
+        acc[pos] = (acc[pos] || 0) + 1;
+        return acc;
+    }, {});
+    return new Set(Object.keys(positionCounts).filter(pos => positionCounts[pos] > 1));
+});
+
+const isLineupValid = computed(() => {
+  if (!startingPitcher.value || battingOrder.value.length !== 9) return false;
+  if (duplicatePositions.value.size > 0) return false; // Check for duplicates
+  
+  for (const spot of battingOrder.value) {
+    if (!spot.position) return false; 
+    if (!isPlayerEligibleForPosition(spot.player, spot.position)) return false;
+  }
+  
+  return true;
+});
+
+function autoPopulateLineup() {
+  const playersToOrder = [...positionPlayers.value].sort((a, b) => b.points - a.points);
+  const lineupSize = useDh.value ? 9 : 8;
+  const topPlayers = playersToOrder.slice(0, lineupSize);
+  
+  const lineup = [];
+  let assignedPlayerIds = new Set();
+  let assignedPositions = new Set();
+  const positionPriority = defensivePositions.value;
+
+  topPlayers.forEach(player => {
+    const p_pos = player.fielding_ratings ? player.fielding_ratings.split(',') : [];
+    for (const pos of positionPriority) {
+        if (isPlayerEligibleForPosition(player, pos) && !assignedPositions.has(pos)) {
+            lineup.push({ player, position: pos });
+            assignedPlayerIds.add(player.card_id);
+            assignedPositions.add(pos);
+            return;
+        }
+    }
+  });
+
+  const remainingPlayers = topPlayers.filter(p => !assignedPlayerIds.has(p.card_id));
+  const remainingPositions = positionPriority.filter(p => !assignedPositions.has(p));
+
+  remainingPlayers.forEach((player) => {
+    if (remainingPositions.length > 0) {
+        const pos = remainingPositions.shift();
+        lineup.push({ player, position: pos });
+    }
+  });
+  battingOrder.value = lineup;
+}
+
+watch(startingPitcher, (newPitcher) => {
+    if (!useDh.value && newPitcher) {
+        battingOrder.value = battingOrder.value.filter(p => p.player.displayPosition !== 'SP' && p.player.displayPosition !== 'RP');
+        if (battingOrder.value.length === 8) {
+            battingOrder.value.push({ player: newPitcher, position: 'P' });
+        }
+    }
+});
 
 function addToLineup(player) {
-  if (battingOrder.value.length < 9 && !battingOrder.value.find(p => p.card_id === player.card_id)) {
-    battingOrder.value.push(player);
-  }
+    const lineupSize = useDh.value ? 9 : 8;
+    const currentPositionPlayers = battingOrder.value.filter(spot => spot.player.control === null);
+    if (currentPositionPlayers.length < lineupSize) {
+        battingOrder.value.push({ player: player, position: null });
+    } else {
+        alert('All position player spots in the lineup are full.');
+    }
 }
 
-function removeFromLineup(player) {
-  battingOrder.value = battingOrder.value.filter(p => p.card_id !== player.card_id);
+function removeFromLineup(card_id) {
+  battingOrder.value = battingOrder.value.filter(p => p.player.card_id !== card_id);
 }
 
 function moveUp(index) {
-  if (index === 0) return;
-  [battingOrder.value[index], battingOrder.value[index - 1]] = [battingOrder.value[index - 1], battingOrder.value[index]];
+  if (index > 0) {
+    [battingOrder.value[index], battingOrder.value[index - 1]] = [battingOrder.value[index - 1], battingOrder.value[index]];
+  }
 }
 
 function moveDown(index) {
-  if (index >= battingOrder.value.length - 1) return;
-  [battingOrder.value[index], battingOrder.value[index + 1]] = [battingOrder.value[index + 1], battingOrder.value[index]];
+  if (index < battingOrder.value.length - 1) {
+    [battingOrder.value[index], battingOrder.value[index + 1]] = [battingOrder.value[index + 1], battingOrder.value[index]];
+  }
 }
 
 async function handleSubmission() {
-    if (battingOrder.value.length !== 9 || !startingPitcher.value) {
-        return alert('You must select 9 batters and 1 starting pitcher.');
+    if (!isLineupValid.value) {
+        return alert('Lineup is invalid. Please select 1 SP and assign 9 unique and legal positions to your batters.');
     }
     const lineupData = {
-        battingOrder: battingOrder.value.map(p => p.card_id),
+        battingOrder: battingOrder.value.map(p => ({ card_id: p.player.card_id, position: p.position })),
         startingPitcher: startingPitcher.value.card_id
     };
     await authStore.submitLineup(gameId, lineupData);
 }
 
-// In src/views/SetLineupView.vue
 onMounted(async () => {
-  // This is a more robust way to get the data this page needs
-  const response = await fetch(`${authStore.API_URL}/api/games/${gameId}/my-roster`, {
-      headers: { 'Authorization': `Bearer ${authStore.token}` }
-  });
-  const participantInfo = await response.json();
-  if (participantInfo.roster_id) {
-    authStore.fetchRosterDetails(participantInfo.roster_id);
+  await gameStore.fetchGame(gameId);
+  const participantInfo = await authStore.fetchMyParticipantInfo(gameId);
+  if (participantInfo && participantInfo.roster_id) {
+    await authStore.fetchRosterDetails(participantInfo.roster_id);
+    autoPopulateLineup();
   }
+
+  socket.connect();
+  socket.emit('join-game-room', gameId);
+  socket.on('game-starting', () => {
+    router.push(`/game/${gameId}`);
+  });
+});
+
+onUnmounted(() => {
+  socket.off('game-starting');
 });
 </script>
 
 <template>
   <div class="container">
-    <h1>Set Your Lineup</h1>
+    <h1>Set Your Starting Lineup</h1>
+    <h2 class="subtitle" v-if="!useDh">Pitcher will bat</h2>
     <div class="lineup-builder">
       <div class="panel">
-        <h2>Your Roster</h2>
+        <h2>Your Starters</h2>
         <div class="player-list">
-          <h3>Pitchers</h3>
-          <div v-for="p in pitchers" :key="p.card_id" class="player-item" @click="setPitcher(p)">
-            {{ p.name }} (SP)
+          <h3>Position Players ({{ positionPlayers.length }})</h3>
+          <div v-for="p in availableBatters" :key="p.card_id" class="player-item" @click="addToLineup(p)">
+            {{ p.name }} ({{ p.displayPosition }})
           </div>
-          <h3>Position Players</h3>
-          <div v-for="p in nonPitchers" :key="p.card_id" class="player-item" @click="addToLineup(p)">
-            {{ p.name }} ({{ p.positions }})
+           <h3>Starting Pitchers ({{ startingPitchers.length }})</h3>
+           <div v-for="p in startingPitchers" :key="p.card_id" class="player-item">
+            {{ p.name }} (SP)
           </div>
         </div>
       </div>
       <div class="panel">
         <h2>Starting Pitcher</h2>
-        <div class="pitcher-slot">
-          <span v-if="startingPitcher">{{ startingPitcher.name }}</span>
-          <span v-else class="placeholder">Click a pitcher to select</span>
-        </div>
-
+        <select v-model="startingPitcher" class="pitcher-select">
+          <option :value="null" disabled>Select an SP...</option>
+          <option v-for="p in startingPitchers" :key="p.card_id" :value="p">
+            {{ p.name }}
+          </option>
+        </select>
         <h2>Batting Order ({{ battingOrder.length }} / 9)</h2>
+        <div class="warning" v-if="duplicatePositions.size > 0">Duplicate positions assigned: {{ Array.from(duplicatePositions).join(', ') }}</div>
+        <div class="warning" v-if="missingPositions.length > 0 && battingOrder.length === 9">Missing Positions: {{ missingPositions.join(', ') }}</div>
         <div class="lineup-slots">
-          <div v-for="(player, index) in battingOrder" :key="player.card_id" class="lineup-item">
-            <span>{{ index + 1 }}. {{ player.name }}</span>
+          <div v-for="(spot, index) in battingOrder" :key="spot.player.card_id" class="lineup-item">
+            <span>{{ index + 1 }}. {{ spot.player.name }}</span>
             <div>
-              <button @click="moveUp(index)" :disabled="index === 0">↑</button>
-              <button @click="moveDown(index)" :disabled="index === battingOrder.length - 1">↓</button>
-              <button @click="removeFromLineup(player)" class="remove-btn">X</button>
+              <select v-model="spot.position" 
+                :class="{ 
+                    'invalid-position': spot.position && !isPlayerEligibleForPosition(spot.player, spot.position),
+                    'duplicate-position': duplicatePositions.has(spot.position) 
+                }"
+                :disabled="spot.player.displayPosition === 'SP' || spot.player.displayPosition === 'RP'">
+                <option :value="null" disabled>Pos...</option>
+                <option v-if="!useDh && (spot.player.displayPosition === 'SP' || spot.player.displayPosition === 'RP')" value="P">P</option>
+                <option v-for="pos in defensivePositions" :key="pos" :value="pos">{{ pos }}</option>
+              </select>
+              <button @click="moveUp(index)" :disabled="index === 0" class="order-btn">↑</button>
+              <button @click="moveDown(index)" :disabled="index === battingOrder.length - 1" class="order-btn">↓</button>
+              <button @click="removeFromLineup(spot.player.card_id)" class="remove-btn">X</button>
             </div>
           </div>
         </div>
-        <button @click="handleSubmission" class="submit-btn">Submit Lineup</button>
+        <button @click="handleSubmission" :disabled="!isLineupValid" class="submit-btn">Submit Lineup</button>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-  .container { max-width: 1200px; margin: 2rem auto; font-family: sans-serif; }
-  .lineup-builder { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+  .container { max-width: 1000px; margin: 2rem auto; font-family: sans-serif; }
+  .lineup-builder { display: grid; grid-template-columns: 1fr 1.5fr; gap: 2rem; }
   .panel { padding: 1rem; background-color: #f9f9f9; border-radius: 8px; }
   .player-list { max-height: 60vh; overflow-y: auto; }
+  h3 { margin-top: 1rem; margin-bottom: 0.5rem; }
   .player-item { padding: 0.5rem; cursor: pointer; border-bottom: 1px solid #eee; }
   .player-item:hover { background-color: #eef8ff; }
-  .pitcher-slot { border: 2px dashed #ccc; padding: 1rem; text-align: center; margin-bottom: 1rem; }
-  .placeholder { color: #888; }
+  .pitcher-select { width: 100%; padding: 0.5rem; margin-bottom: 1rem; font-size: 1rem; border-radius: 4px; border: 1px solid #ccc; }
+  .lineup-slots { max-height: 50vh; overflow-y: auto; }
   .lineup-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid #eee; }
-  .remove-btn { color: red; margin-left: 0.5rem; }
-  .submit-btn { width: 100%; padding: 1rem; font-size: 1.2rem; margin-top: 1rem; cursor: pointer; }
+  .lineup-item select { border-radius: 4px; border: 1px solid #ccc; }
+  .lineup-item select.invalid-position, .lineup-item select.duplicate-position { border-color: red; background-color: #ffe3e3; }
+  .lineup-item select.duplicate-position { 
+    border-color: orange; 
+    background-color: #fff3e0;
+  }
+  .warning {
+    color: orange;
+    font-weight: bold;
+    text-align: center;
+    margin-bottom: 1rem;
+  }
+  .remove-btn { color: red; margin-left: 0.5rem; background: transparent; border: none; font-size: 1.2rem; cursor: pointer; }
+  .order-btn { margin-left: 0.5rem; padding: 2px 6px; }
+  .submit-btn { width: 100%; padding: 1rem; font-size: 1.2rem; margin-top: 1rem; cursor: pointer; border-radius: 4px; border: none; color: white; background-color: #28a745; }
+  .submit-btn:disabled { background-color: #ccc; cursor: not-allowed; }
+  .subtitle { text-align: center; color: #dc3545; font-weight: bold; margin-top: -1rem; margin-bottom: 1rem; }
 </style>

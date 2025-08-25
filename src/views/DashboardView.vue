@@ -8,7 +8,7 @@ const authStore = useAuthStore();
 
 const gamesToJoin = computed(() => {
     if (!authStore.user) return [];
-    return authStore.openGames.filter(game => game.host_username !== authStore.user.username)
+    return authStore.openGames.filter(game => game.host_email !== authStore.user.email)
 });
 
 function handleCreateGame() {
@@ -28,7 +28,6 @@ function handleJoinGame(gameId) {
 }
 
 function refreshData() {
-    console.log('Received games-updated event, refreshing lists...');
     authStore.fetchMyGames();
     authStore.fetchOpenGames();
 }
@@ -49,7 +48,7 @@ onUnmounted(() => {
 <template>
   <div class="dashboard">
     <header>
-      <h1>Welcome, {{ authStore.user?.username }}!</h1>
+      <h1>Welcome, {{ authStore.user?.email }}!</h1>
       <button @click="authStore.logout()">Logout</button>
     </header>
 
@@ -72,12 +71,14 @@ onUnmounted(() => {
         </ul>
         <p v-else>You are not in any games.</p>
       </div>
-
+      
       <div class="panel">
-        <h2>Open Games to Join</h2>
+        <div class="panel-header">
+            <h2>Open Games to Join</h2>
+        </div>
          <ul v-if="gamesToJoin.length > 0">
           <li v-for="game in gamesToJoin" :key="game.game_id">
-            <span>Game hosted by {{ game.host_username }}</span>
+            <span>Game hosted by {{ game.host_email }}</span>
             <button @click="handleJoinGame(game.game_id)">Join Game</button>
           </li>
         </ul>
@@ -107,16 +108,8 @@ onUnmounted(() => {
   header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 1rem; }
   main { margin-top: 2rem; display: grid; gap: 2rem; }
   .panel { background: #f9f9f9; padding: 1.5rem; border-radius: 8px; }
-  .panel-header { /* <-- CHANGE #2: New style for the header */
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
+  .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
   .panel-header h2 { margin: 0; }
-  .action-btn { /* <-- CHANGE #3: Removed float */
-    /* No float needed anymore */
-  }
   ul { list-style: none; padding: 0; }
   li { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background-color: #fff; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 0.5rem; }
   li a { display: flex; flex-grow: 1; justify-content: space-between; text-decoration: none; color: inherit; }
