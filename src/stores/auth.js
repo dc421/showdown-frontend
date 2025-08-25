@@ -107,6 +107,7 @@ export const useAuthStore = defineStore('auth', () => {
         p.displayPosition = positions.replace(/LFRF/g, 'LF/RF');
     }
 });
+console.log(players)
 allPlayers.value = players;
     } catch (error) {
         console.error('Failed to fetch players:', error);

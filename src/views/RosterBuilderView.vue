@@ -24,6 +24,7 @@ const allPlayersOnRoster = computed(() => [
     ...roster.value.bench
 ]);
 const playerCount = computed(() => allPlayersOnRoster.value.length);
+const totalPoints = computed(() => allPlayersOnRoster.value.reduce((sum, p) => sum + (p.points || 0), 0));
 
 const availablePlayers = computed(() => {
   return authStore.allPlayers
@@ -34,9 +35,6 @@ const availablePlayers = computed(() => {
         if (filterPosition.value === 'RP') return p.displayPosition === 'RP';
         if (filterPosition.value === 'P') return p.control !== null;
         if (filterPosition.value === 'DH') return p.displayPosition === 'DH';
-        
-        // This is the corrected part for position players
-        if (p.control !== null) return false; // Not a position player
         const playerPositions = p.fielding_ratings ? Object.keys(p.fielding_ratings) : [];
         if (filterPosition.value === 'LF/RF') return playerPositions.includes('LF') || playerPositions.includes('RF');
         return playerPositions.includes(filterPosition.value);
@@ -44,24 +42,46 @@ const availablePlayers = computed(() => {
     .sort((a, b) => (b.points || 0) - (a.points || 0));
 });
 
-const starters = computed(() => [
-    ...Object.values(roster.value.lineup).filter(p => p),
-    ...roster.value.pitchingStaff.filter(p => p.displayPosition === 'SP')
-]);
-const starterPlayerIds = computed(() => new Set(starters.value.map(p => p.card_id)));
-
-const totalPoints = computed(() => {
-  return allPlayersOnRoster.value.reduce((sum, player) => {
-    const isStarter = starterPlayerIds.value.has(player.card_id);
-    const cost = isStarter ? player.points : Math.round(player.points / 5);
-    return sum + cost;
-  }, 0);
-});
-
+const lineupPlayers = computed(() => Object.values(roster.value.lineup).filter(p => p));
 const startingPitchersOnRoster = computed(() => roster.value.pitchingStaff.filter(p => p.displayPosition === 'SP'));
 const bullpenOnRoster = computed(() => roster.value.pitchingStaff.filter(p => p.displayPosition === 'RP'));
 const benchPlayers = computed(() => roster.value.bench);
-const lineupPlayers = computed(() => Object.values(roster.value.lineup).filter(p => p));
+
+// --- HELPER & VALIDATION ---
+function isPlayerEligibleForPosition(player, position) {
+    if (!player || !position) return false;
+    if (player.control !== null) return false; // Pitchers can't play in the lineup
+    if (position === '1B' || position === 'DH') return true; // Any position player can play 1B or DH
+    const playerPositions = player.fielding_ratings ? Object.keys(player.fielding_ratings) : [];
+    if (position === 'LF' || position === 'RF') {
+        return playerPositions.includes('LF') || playerPositions.includes('RF') || playerPositions.includes('LFRF');
+    }
+    return playerPositions.includes(position);
+}
+
+const isRosterValid = computed(() => {
+  // Rule 1: Must have 20 players
+  if (playerCount.value !== 20) return false;
+  
+  // Rule 2: Must be under 5000 points
+  if (totalPoints.value > 5000) return false;
+
+  // Rule 3: Must have exactly 4 Starting Pitchers on the staff
+  if (startingPitchersOnRoster.value.length !== 4) return false;
+  
+  // Rule 4: All 9 lineup spots must be filled
+  if (lineupPlayers.value.length !== 9) return false;
+
+  // Rule 5: Every player in the lineup must be eligible for their assigned position
+  for (const pos in roster.value.lineup) {
+    const player = roster.value.lineup[pos];
+    if (!isPlayerEligibleForPosition(player, pos)) {
+      return false;
+    }
+  }
+
+  return true; // If all checks pass, the roster is valid
+});
 
 
 // --- METHODS ---
@@ -74,20 +94,14 @@ function onDrop(event, to, targetPosition = null) {
   if (!draggedItem.value) return;
   const { player, from } = draggedItem.value;
   const playerFromRoster = from !== 'available';
-
   if (playerCount.value >= 20 && !playerFromRoster) {
     draggedItem.value = null; return;
   }
-  
   if (playerFromRoster) removePlayer(player);
-
   if (to === 'lineup') {
     if (player.control !== null) { if(playerFromRoster) addPlayer(player); draggedItem.value = null; return; }
     const existingPlayer = roster.value.lineup[targetPosition];
-    if (existingPlayer) {
-        removePlayer(existingPlayer);
-        addPlayer(existingPlayer);
-    }
+    if (existingPlayer) { removePlayer(existingPlayer); addPlayer(existingPlayer); }
     roster.value.lineup[targetPosition] = player;
   } else if (to === 'pitchingStaff') {
     if(player.control === null) { if(playerFromRoster) addPlayer(player); draggedItem.value = null; return; }
@@ -96,15 +110,13 @@ function onDrop(event, to, targetPosition = null) {
      if(player.control !== null) { if(playerFromRoster) addPlayer(player); draggedItem.value = null; return; }
     roster.value.bench.push(player);
   } else if (from === 'available') {
-      addPlayer(player);
+    addPlayer(player);
   }
-  
   draggedItem.value = null;
 }
 
 function addPlayer(player) {
   if (allPlayersOnRoster.value.some(p => p.name === player.name)) return;
-
   if (player.control !== null) {
     roster.value.pitchingStaff.push(player);
   } else {
@@ -118,7 +130,9 @@ function addPlayer(player) {
         break;
       }
     }
-    if (!placed) roster.value.bench.push(player);
+    if (!placed) {
+      roster.value.bench.push(player);
+    }
   }
 }
 
@@ -133,10 +147,17 @@ function removePlayer(playerToRemove) {
 }
 
 async function saveRoster() {
+  if (!isRosterValid.value) {
+      return alert('Your roster is invalid. Please ensure you have 20 players under 5000 points, with 9 players in the lineup, at least 4 SPs on staff, and all required defensive positions are covered.');
+  }
+  const starters = [
+      ...lineupPlayers.value,
+      ...startingPitchersOnRoster.value
+  ];
   const rosterData = {
     roster_name: newRosterName.value,
     card_ids: allPlayersOnRoster.value.map(p => p.card_id),
-    starter_ids: Array.from(starterPlayerIds.value)
+    starter_ids: starters.map(p => p.card_id)
   };
   await authStore.createRoster(rosterData);
 }
@@ -152,9 +173,6 @@ onMounted(() => {
   <div class="builder-container">
     <div class="available-players-section panel">
       <div class="panel-header">
-      <div class="debug-panel">
-        <strong>Debug: {{ authStore.allPlayers.length }} players loaded from store.</strong>
-      </div>
         <h2>Available Players</h2>
         <select v-model="filterPosition">
           <option value="ALL">All Positions</option>
@@ -198,7 +216,7 @@ onMounted(() => {
                 <div class="lineup-grid-positions">
                     <div v-for="(player, pos) in roster.lineup" :key="pos" class="lineup-position drop-zone" @dragover.prevent @drop="onDrop($event, 'lineup', pos)">
                         <strong>{{ pos }}:</strong>
-                        <div v-if="player" class="player-chip" draggable="true" @dragstart="onDragStart($event, player, 'lineup', pos)" @click="removePlayer(player)">
+                        <div v-if="player" class="player-chip" draggable="true" @dragstart="onDragStart($event, player, 'lineup', pos)" @click="removePlayer(player)" :class="{ 'illegal-placement': !isPlayerEligibleForPosition(player, pos) }">
                             {{ player.displayName }} <small>({{player.displayPosition}} | {{player.points}} pts)</small>
                         </div>
                     </div>
@@ -248,6 +266,10 @@ onMounted(() => {
 .lineup-position { padding: 0.5rem; border: 1px dashed #ccc; border-radius: 4px; min-height: 50px; font-size: 0.9em; }
 .staff-area { flex-grow: 1; display: flex; flex-direction: column; gap: 0.5rem; }
 .bench-area { border: 1px dashed #ccc; border-radius: 4px; padding: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-content: flex-start; min-height: 50px; }
+.player-chip.illegal-placement {
+  border: 2px solid #dc3545; /* A bright red border */
+  background-color: #ffdddd; /* A light red background */
+}
 .player-chip { background-color: #dee2e6; padding: 0.25rem 0.5rem; border-radius: 12px; cursor: grab; font-size: 0.85em; }
 .player-chip:hover { background-color: #ffdddd; }
 .player-chip small { color: #495057; }
