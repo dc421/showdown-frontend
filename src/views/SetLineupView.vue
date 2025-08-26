@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { useGameStore } from '@/stores/game';
@@ -39,10 +39,17 @@ const availableBatters = computed(() => {
 
 function isPlayerEligibleForPosition(player, position) {
     if (!player || !position) return false;
-    if (player.displayPosition === 'SP' || player.displayPosition === 'RP') return position === 'P';
+    if (player.displayPosition === 'SP' || player.displayPosition === 'RP') {
+        return position === 'P';
+    }
     if (position === '1B' || (position === 'DH' && useDh.value)) return true;
-    const playerPositions = player.fielding_ratings ? player.fielding_ratings.split(',') : [];
-    if (position === 'LF' || position === 'RF') return playerPositions.includes('LF') || playerPositions.includes('RF') || playerPositions.includes('LFRF');
+    
+    // This is the corrected line
+    const playerPositions = player.fielding_ratings ? Object.keys(player.fielding_ratings) : [];
+
+    if (position === 'LF' || position === 'RF') {
+        return playerPositions.includes('LF') || playerPositions.includes('RF') || playerPositions.includes('LFRF');
+    }
     return playerPositions.includes(position);
 }
 
@@ -68,6 +75,7 @@ const isLineupValid = computed(() => {
   return true;
 });
 
+// In src/views/SetLineupView.vue
 function autoPopulateLineup() {
   const playersToOrder = [...positionPlayers.value].sort((a, b) => b.points - a.points);
   const lineupSize = useDh.value ? 9 : 8;
@@ -79,7 +87,8 @@ function autoPopulateLineup() {
   const positionPriority = defensivePositions.value;
 
   topPlayers.forEach(player => {
-    const p_pos = player.fielding_ratings ? player.fielding_ratings.split(',') : [];
+    // CORRECTED: Use Object.keys() on the fielding_ratings object
+    const p_pos = player.fielding_ratings ? Object.keys(player.fielding_ratings) : [];
     for (const pos of positionPriority) {
         if (isPlayerEligibleForPosition(player, pos) && !assignedPositions.has(pos)) {
             lineup.push({ player, position: pos });
@@ -96,7 +105,7 @@ function autoPopulateLineup() {
   remainingPlayers.forEach((player) => {
     if (remainingPositions.length > 0) {
         const pos = remainingPositions.shift();
-        lineup.push({ player, position: pos });
+        lineup.push({ player: player, position: pos });
     }
   });
   battingOrder.value = lineup;

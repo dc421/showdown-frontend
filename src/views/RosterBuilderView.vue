@@ -36,8 +36,11 @@ const availablePlayers = computed(() => {
         if (filterPosition.value === 'P') return p.control !== null;
         if (filterPosition.value === 'DH') return p.displayPosition === 'DH';
         const playerPositions = p.fielding_ratings ? Object.keys(p.fielding_ratings) : [];
-        if (filterPosition.value === 'LF/RF') return playerPositions.includes('LF') || playerPositions.includes('RF');
-        return playerPositions.includes(filterPosition.value);
+        if (filterPosition.value === 'LF/RF') {
+    const positions = p.fielding_ratings ? Object.keys(p.fielding_ratings) : [];
+    return positions.includes('LF') || positions.includes('RF') || positions.includes('LFRF');
+}
+return playerPositions.includes(filterPosition.value);
     })
     .sort((a, b) => (b.points || 0) - (a.points || 0));
 });
@@ -80,9 +83,13 @@ const isRosterValid = computed(() => {
     }
   }
 
+  // Rule 6: Check for duplicate player names
+  const names = allPlayersOnRoster.value.map(p => p.name);
+  const uniqueNames = new Set(names);
+  if (uniqueNames.size !== names.length) return false;
+
   return true; // If all checks pass, the roster is valid
 });
-
 
 // --- METHODS ---
 function onDragStart(event, player, from, originalPosition = null) {
@@ -146,9 +153,11 @@ function removePlayer(playerToRemove) {
     }
 }
 
+
+
 async function saveRoster() {
   if (!isRosterValid.value) {
-      return alert('Your roster is invalid. Please ensure you have 20 players under 5000 points, with 9 players in the lineup, at least 4 SPs on staff, and all required defensive positions are covered.');
+      return alert('Your roster is invalid. Please ensure you have 20 players under 5000 points, with 9 players in the lineup, 4 SPs on staff, no duplicate players, and all required defensive positions are covered.');
   }
   const starters = [
       ...lineupPlayers.value,

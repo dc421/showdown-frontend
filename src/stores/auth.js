@@ -205,26 +205,31 @@ allPlayers.value = players;
     }
   }
 
-  async function fetchRosterDetails(rosterId) {
-    if (!token.value) return;
-    try {
-        const response = await fetch(`${API_URL}/api/rosters/${rosterId}`, {
-            headers: { 'Authorization': `Bearer ${token.value}` }
-        });
-        if (!response.ok) throw new Error('Failed to fetch roster details');
-        const rosterPlayers = await response.json();
-        rosterPlayers.forEach(p => {
-            if (p.control !== null) {
-                p.displayPosition = Number(p.ip) > 3 ? 'SP' : 'RP';
-            } else {
-                p.displayPosition = p.positions ? p.positions.replace(/LFRF/g, 'LF/RF') : 'DH';
-            }
-        });
-        activeRosterCards.value = rosterPlayers;
-    } catch (error) {
-        console.error(error);
-    }
+  // In src/stores/auth.js
+async function fetchRosterDetails(rosterId) {
+  if (!token.value) return;
+  try {
+    const response = await fetch(`${API_URL}/api/rosters/${rosterId}`, {
+      headers: { 'Authorization': `Bearer ${token.value}` }
+    });
+    if (!response.ok) throw new Error('Failed to fetch roster details');
+    const rosterPlayers = await response.json();
+
+    // Corrected logic to build the display position string
+    rosterPlayers.forEach(p => {
+      if (p.control !== null) {
+        p.displayPosition = Number(p.ip) > 3 ? 'SP' : 'RP';
+      } else {
+        const positions = p.fielding_ratings ? Object.keys(p.fielding_ratings).join(',') : 'DH';
+        p.displayPosition = positions.replace(/LFRF/g, 'LF/RF');
+      }
+    });
+
+    activeRosterCards.value = rosterPlayers;
+  } catch (error) {
+    console.error(error);
   }
+}
 
   async function submitLineup(gameId, lineupData) {
     if (!token.value) return;
