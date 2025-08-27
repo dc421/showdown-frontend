@@ -88,31 +88,18 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function fetchAllPlayers() {
-    if (!token.value) return;
-    try {
-        const response = await fetch(`${API_URL}/api/cards/player`, {
-            headers: { 'Authorization': `Bearer ${token.value}` }
-        });
-        if (!response.ok) throw new Error('Failed to fetch player cards');
-        const players = await response.json();
-        const nameCounts = {};
-        players.forEach(p => { nameCounts[p.name] = (nameCounts[p.name] || 0) + 1; });
-        players.forEach(p => {
-    p.displayName = nameCounts[p.name] > 1 ? `${p.name} (${p.team})` : p.name;
-    if (p.control !== null) {
-        p.displayPosition = Number(p.ip) > 3 ? 'SP' : 'RP';
-    } else {
-        // Create display positions from the keys of the fielding_ratings object
-        const positions = p.fielding_ratings ? Object.keys(p.fielding_ratings).join(',') : 'DH';
-        p.displayPosition = positions.replace(/LFRF/g, 'LF/RF');
-    }
-});
-console.log(players)
-allPlayers.value = players;
-    } catch (error) {
-        console.error('Failed to fetch players:', error);
-    }
+  if (!token.value) return;
+  try {
+    const response = await fetch(`${API_URL}/api/cards/player`, {
+      headers: { 'Authorization': `Bearer ${token.value}` }
+    });
+    if (!response.ok) throw new Error('Failed to fetch player cards');
+    // The data is already processed by the server, just save it
+    allPlayers.value = await response.json();
+  } catch (error) {
+    console.error('Failed to fetch players:', error);
   }
+}
 
   async function createRoster(rosterData) {
   if (!token.value) return;

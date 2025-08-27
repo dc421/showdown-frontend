@@ -12,7 +12,8 @@ const router = useRouter();
 const gameId = route.params.id;
 
 const startingPitcher = ref(null);
-const battingOrder = ref([]); 
+const battingOrder = ref([]);
+const hasSubmitted = ref(false); // New state for the waiting screen
 const useDh = computed(() => gameStore.game?.use_dh !== false);
 
 const defensivePositions = computed(() => {
@@ -27,37 +28,24 @@ const starters = computed(() => authStore.activeRosterCards.filter(p => p.is_sta
 const startingPitchers = computed(() => starters.value.filter(p => p.displayPosition === 'SP'));
 const positionPlayers = computed(() => starters.value.filter(p => p.displayPosition !== 'SP' && p.displayPosition !== 'RP'));
 
-const missingPositions = computed(() => {
-    const required = new Set(defensivePositions.value);
-    const assigned = new Set(battingOrder.value.map(p => p.position));
-    return [...required].filter(pos => !assigned.has(pos));
-});
-
 const availableBatters = computed(() => {
   return positionPlayers.value.filter(p => !battingOrder.value.some(bo => bo.player.card_id === p.card_id));
 });
 
 function isPlayerEligibleForPosition(player, position) {
     if (!player || !position) return false;
-    if (player.displayPosition === 'SP' || player.displayPosition === 'RP') {
-        return position === 'P';
-    }
+    if (player.displayPosition === 'SP' || player.displayPosition === 'RP') return position === 'P';
     if (position === '1B' || (position === 'DH' && useDh.value)) return true;
-    
-    // This is the corrected line
     const playerPositions = player.fielding_ratings ? Object.keys(player.fielding_ratings) : [];
-
-    if (position === 'LF' || position === 'RF') {
-        return playerPositions.includes('LF') || playerPositions.includes('RF') || playerPositions.includes('LFRF');
-    }
+    if (position === 'LF' || position === 'RF') return playerPositions.includes('LF') || playerPositions.includes('RF') || playerPositions.includes('LFRF');
     return playerPositions.includes(position);
 }
 
-// --- NEW: Computed property to find duplicate positions ---
 const duplicatePositions = computed(() => {
     const positions = battingOrder.value.map(spot => spot.position).filter(pos => pos);
     const positionCounts = positions.reduce((acc, pos) => {
-        acc[pos] = (acc[pos] || 0) + 1;
+        const key = pos === 'P' ? 'DH' : pos;
+        acc[key] = (acc[key] || 0) + 1;
         return acc;
     }, {});
     return new Set(Object.keys(positionCounts).filter(pos => positionCounts[pos] > 1));
@@ -65,17 +53,14 @@ const duplicatePositions = computed(() => {
 
 const isLineupValid = computed(() => {
   if (!startingPitcher.value || battingOrder.value.length !== 9) return false;
-  if (duplicatePositions.value.size > 0) return false; // Check for duplicates
+  if (duplicatePositions.value.size > 0) return false;
   
   for (const spot of battingOrder.value) {
-    if (!spot.position) return false; 
-    if (!isPlayerEligibleForPosition(spot.player, spot.position)) return false;
+    if (!spot.position || !isPlayerEligibleForPosition(spot.player, spot.position)) return false;
   }
-  
   return true;
 });
 
-// In src/views/SetLineupView.vue
 function autoPopulateLineup() {
   const playersToOrder = [...positionPlayers.value].sort((a, b) => b.points - a.points);
   const lineupSize = useDh.value ? 9 : 8;
@@ -87,7 +72,6 @@ function autoPopulateLineup() {
   const positionPriority = defensivePositions.value;
 
   topPlayers.forEach(player => {
-    // CORRECTED: Use Object.keys() on the fielding_ratings object
     const p_pos = player.fielding_ratings ? Object.keys(player.fielding_ratings) : [];
     for (const pos of positionPriority) {
         if (isPlayerEligibleForPosition(player, pos) && !assignedPositions.has(pos)) {
@@ -98,14 +82,12 @@ function autoPopulateLineup() {
         }
     }
   });
-
   const remainingPlayers = topPlayers.filter(p => !assignedPlayerIds.has(p.card_id));
   const remainingPositions = positionPriority.filter(p => !assignedPositions.has(p));
-
   remainingPlayers.forEach((player) => {
     if (remainingPositions.length > 0) {
         const pos = remainingPositions.shift();
-        lineup.push({ player: player, position: pos });
+        lineup.push({ player, position: pos });
     }
   });
   battingOrder.value = lineup;
@@ -155,6 +137,7 @@ async function handleSubmission() {
         startingPitcher: startingPitcher.value.card_id
     };
     await authStore.submitLineup(gameId, lineupData);
+    hasSubmitted.value = true; // Show the waiting message
 }
 
 onMounted(async () => {
@@ -164,7 +147,6 @@ onMounted(async () => {
     await authStore.fetchRosterDetails(participantInfo.roster_id);
     autoPopulateLineup();
   }
-
   socket.connect();
   socket.emit('join-game-room', gameId);
   socket.on('game-starting', () => {
@@ -179,55 +161,60 @@ onUnmounted(() => {
 
 <template>
   <div class="container">
-    <h1>Set Your Starting Lineup</h1>
-    <h2 class="subtitle" v-if="!useDh">Pitcher will bat</h2>
-    <div class="lineup-builder">
-      <div class="panel">
-        <h2>Your Starters</h2>
-        <div class="player-list">
-          <h3>Position Players ({{ positionPlayers.length }})</h3>
-          <div v-for="p in availableBatters" :key="p.card_id" class="player-item" @click="addToLineup(p)">
-            {{ p.name }} ({{ p.displayPosition }})
-          </div>
-           <h3>Starting Pitchers ({{ startingPitchers.length }})</h3>
-           <div v-for="p in startingPitchers" :key="p.card_id" class="player-item">
-            {{ p.name }} (SP)
-          </div>
-        </div>
-      </div>
-      <div class="panel">
-        <h2>Starting Pitcher</h2>
-        <select v-model="startingPitcher" class="pitcher-select">
-          <option :value="null" disabled>Select an SP...</option>
-          <option v-for="p in startingPitchers" :key="p.card_id" :value="p">
-            {{ p.name }}
-          </option>
-        </select>
-        <h2>Batting Order ({{ battingOrder.length }} / 9)</h2>
-        <div class="warning" v-if="duplicatePositions.size > 0">Duplicate positions assigned: {{ Array.from(duplicatePositions).join(', ') }}</div>
-        <div class="warning" v-if="missingPositions.length > 0 && battingOrder.length === 9">Missing Positions: {{ missingPositions.join(', ') }}</div>
-        <div class="lineup-slots">
-          <div v-for="(spot, index) in battingOrder" :key="spot.player.card_id" class="lineup-item">
-            <span>{{ index + 1 }}. {{ spot.player.name }}</span>
-            <div>
-              <select v-model="spot.position" 
-                :class="{ 
-                    'invalid-position': spot.position && !isPlayerEligibleForPosition(spot.player, spot.position),
-                    'duplicate-position': duplicatePositions.has(spot.position) 
-                }"
-                :disabled="spot.player.displayPosition === 'SP' || spot.player.displayPosition === 'RP'">
-                <option :value="null" disabled>Pos...</option>
-                <option v-if="!useDh && (spot.player.displayPosition === 'SP' || spot.player.displayPosition === 'RP')" value="P">P</option>
-                <option v-for="pos in defensivePositions" :key="pos" :value="pos">{{ pos }}</option>
-              </select>
-              <button @click="moveUp(index)" :disabled="index === 0" class="order-btn">↑</button>
-              <button @click="moveDown(index)" :disabled="index === battingOrder.length - 1" class="order-btn">↓</button>
-              <button @click="removeFromLineup(spot.player.card_id)" class="remove-btn">X</button>
+    <div v-if="!hasSubmitted">
+      <h1>Set Your Starting Lineup</h1>
+      <h2 class="subtitle" v-if="!useDh">Pitcher will bat</h2>
+      <div class="lineup-builder">
+        <div class="panel">
+          <h2>Your Starters</h2>
+          <div class="player-list">
+            <h3>Position Players ({{ positionPlayers.length }})</h3>
+            <div v-for="p in availableBatters" :key="p.card_id" class="player-item" @click="addToLineup(p)">
+              {{ p.name }} ({{ p.displayPosition }})
+            </div>
+            <h3>Starting Pitchers ({{ startingPitchers.length }})</h3>
+            <div v-for="p in startingPitchers" :key="p.card_id" class="player-item">
+              {{ p.name }} (SP)
             </div>
           </div>
         </div>
-        <button @click="handleSubmission" :disabled="!isLineupValid" class="submit-btn">Submit Lineup</button>
+        <div class="panel">
+          <h2>Starting Pitcher</h2>
+          <select v-model="startingPitcher" class="pitcher-select">
+            <option :value="null" disabled>Select an SP...</option>
+            <option v-for="p in startingPitchers" :key="p.card_id" :value="p">
+              {{ p.name }}
+            </option>
+          </select>
+          <h2>Batting Order ({{ battingOrder.length }} / 9)</h2>
+          <div class="lineup-slots">
+            <div v-for="(spot, index) in battingOrder" :key="spot.player.card_id" class="lineup-item">
+              <span>{{ index + 1 }}. {{ spot.player.name }}</span>
+              <div>
+                <select v-model="spot.position" 
+                  :class="{ 
+                      'invalid-position': spot.position && !isPlayerEligibleForPosition(spot.player, spot.position),
+                      'duplicate-position': duplicatePositions.has(spot.position) 
+                  }" 
+                  :disabled="spot.player.displayPosition === 'SP' || spot.player.displayPosition === 'RP'">
+                  <option :value="null" disabled>Pos...</option>
+                  <option v-if="!useDh && (spot.player.displayPosition === 'SP' || spot.player.displayPosition === 'RP')" value="P">P</option>
+                  <option v-for="pos in defensivePositions" :key="pos" :value="pos">{{ pos }}</option>
+                </select>
+                <button @click="moveUp(index)" :disabled="index === 0" class="order-btn">↑</button>
+                <button @click="moveDown(index)" :disabled="index === battingOrder.length - 1" class="order-btn">↓</button>
+                <button @click="removeFromLineup(spot.player.card_id)" class="remove-btn">X</button>
+              </div>
+            </div>
+          </div>
+          <button @click="handleSubmission" :disabled="!isLineupValid" class="submit-btn">Submit Lineup</button>
+        </div>
       </div>
+    </div>
+    <div v-else class="waiting-message panel">
+        <h1>Lineup Submitted!</h1>
+        <p>Waiting for your opponent to set their lineup...</p>
+        <p>(You will be taken to the game automatically when they are ready)</p>
     </div>
   </div>
 </template>
@@ -244,20 +231,11 @@ onUnmounted(() => {
   .lineup-slots { max-height: 50vh; overflow-y: auto; }
   .lineup-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid #eee; }
   .lineup-item select { border-radius: 4px; border: 1px solid #ccc; }
-  .lineup-item select.invalid-position, .lineup-item select.duplicate-position { border-color: red; background-color: #ffe3e3; }
-  .lineup-item select.duplicate-position { 
-    border-color: orange; 
-    background-color: #fff3e0;
-  }
-  .warning {
-    color: orange;
-    font-weight: bold;
-    text-align: center;
-    margin-bottom: 1rem;
-  }
+  .lineup-item select.invalid-position, .lineup-item select.duplicate-position { border-color: orange; background-color: #fff3e0; }
   .remove-btn { color: red; margin-left: 0.5rem; background: transparent; border: none; font-size: 1.2rem; cursor: pointer; }
   .order-btn { margin-left: 0.5rem; padding: 2px 6px; }
   .submit-btn { width: 100%; padding: 1rem; font-size: 1.2rem; margin-top: 1rem; cursor: pointer; border-radius: 4px; border: none; color: white; background-color: #28a745; }
   .submit-btn:disabled { background-color: #ccc; cursor: not-allowed; }
   .subtitle { text-align: center; color: #dc3545; font-weight: bold; margin-top: -1rem; margin-bottom: 1rem; }
+  .waiting-message { text-align: center; }
 </style>
