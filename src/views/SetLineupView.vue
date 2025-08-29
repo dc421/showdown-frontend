@@ -17,7 +17,7 @@ const hasSubmitted = ref(false); // New state for the waiting screen
 const useDh = computed(() => gameStore.game?.use_dh !== false);
 
 const defensivePositions = computed(() => {
-  const positions = ['C', '1B', '2B', 'SS', '3B', 'LF', 'CF', 'RF'];
+  const positions = ['C', 'SS', 'CF', '2B', '3B', 'LF', 'RF', '1B'];
   if (useDh.value) {
     positions.push('DH');
   }
@@ -65,32 +65,43 @@ function autoPopulateLineup() {
   const playersToOrder = [...positionPlayers.value].sort((a, b) => b.points - a.points);
   const lineupSize = useDh.value ? 9 : 8;
   const topPlayers = playersToOrder.slice(0, lineupSize);
-  
-  const lineup = [];
-  let assignedPlayerIds = new Set();
-  let assignedPositions = new Set();
+
+  let unassignedPlayers = [...topPlayers];
+  const assignments = []; // This will hold the player-position pairs
   const positionPriority = defensivePositions.value;
 
-  topPlayers.forEach(player => {
-    const p_pos = player.fielding_ratings ? Object.keys(player.fielding_ratings) : [];
-    for (const pos of positionPriority) {
-        if (isPlayerEligibleForPosition(player, pos) && !assignedPositions.has(pos)) {
-            lineup.push({ player, position: pos });
-            assignedPlayerIds.add(player.card_id);
-            assignedPositions.add(pos);
-            return;
+  // --- Phase 1: Assign Best Defensive Positions ---
+  positionPriority.forEach(pos => {
+    // Find the best player (highest points) in the unassigned list who can play this position
+    let bestPlayerIndex = -1;
+    for (let i = 0; i < unassignedPlayers.length; i++) {
+        if (isPlayerEligibleForPosition(unassignedPlayers[i], pos)) {
+            bestPlayerIndex = i;
+            break; // Found the best available player for this spot
         }
     }
-  });
-  const remainingPlayers = topPlayers.filter(p => !assignedPlayerIds.has(p.card_id));
-  const remainingPositions = positionPriority.filter(p => !assignedPositions.has(p));
-  remainingPlayers.forEach((player) => {
-    if (remainingPositions.length > 0) {
-        const pos = remainingPositions.shift();
-        lineup.push({ player, position: pos });
+    
+    if (bestPlayerIndex !== -1) {
+        const player = unassignedPlayers[bestPlayerIndex];
+        assignments.push({ player: player, position: pos });
+        // Remove the assigned player from the pool
+        unassignedPlayers.splice(bestPlayerIndex, 1);
     }
   });
-  battingOrder.value = lineup;
+
+  // If any players are left unassigned (e.g., not enough coverage), assign them to the remaining open spots
+  const assignedPositions = assignments.map(a => a.position);
+  const openPositions = positionPriority.filter(p => !assignedPositions.includes(p));
+  unassignedPlayers.forEach(player => {
+      if (openPositions.length > 0) {
+          assignments.push({ player: player, position: openPositions.shift() });
+      }
+  });
+
+  // --- Phase 2: Sort the Assigned Lineup by Points ---
+  const finalBattingOrder = assignments.sort((a, b) => b.player.points - a.player.points);
+
+  battingOrder.value = finalBattingOrder;
 }
 
 watch(startingPitcher, (newPitcher) => {
@@ -137,6 +148,7 @@ async function handleSubmission() {
         startingPitcher: startingPitcher.value.card_id
     };
     await authStore.submitLineup(gameId, lineupData);
+    console.log('Lineup submitted. Now in waiting state.'); // <-- ADD THIS
     hasSubmitted.value = true; // Show the waiting message
 }
 
@@ -150,11 +162,13 @@ onMounted(async () => {
   socket.connect();
   socket.emit('join-game-room', gameId);
   socket.on('game-starting', () => {
-    router.push(`/game/${gameId}`);
+  console.log("--- FRONTEND: Received 'game-starting' event! Redirecting... ---");
+  router.push(`/game/${gameId}`);
   });
 });
 
 onUnmounted(() => {
+  console.log('SetLineupView is UNMOUNTING.'); // <-- ADD THIS
   socket.off('game-starting');
 });
 </script>

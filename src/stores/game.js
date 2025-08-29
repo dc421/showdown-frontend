@@ -57,6 +57,38 @@ export const useGameStore = defineStore('game', () => {
     }
   }
 
+  // in src/stores/game.js
+async function submitBaserunningDecisions(gameId, decisions) {
+  const auth = useAuthStore();
+  if (!auth.token) return;
+  try {
+    await fetch(`${auth.API_URL}/api/games/${gameId}/submit-decisions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth.token}` },
+      body: JSON.stringify({ decisions })
+    });
+  } catch (error) { console.error("Error submitting decisions:", error); }
+}
+// Also, make sure `submitBaserunningDecisions` is in your return object at the end of the file.
+
+async function resolveDefensiveThrow(gameId, throwTo) {
+  const auth = useAuthStore();
+  if (!auth.token) return;
+  try {
+    await fetch(`${auth.API_URL}/api/games/${gameId}/resolve-throw`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${auth.token}`
+      },
+      body: JSON.stringify({ throwTo })
+    });
+    // The websocket event will handle the state update
+  } catch (error) {
+    console.error("Error resolving throw:", error);
+  }
+}
+
   async function setDefense(gameId, infieldIn) {
   const auth = useAuthStore();
   if (!auth.token) return;
@@ -157,24 +189,24 @@ export const useGameStore = defineStore('game', () => {
     }
   }
 
-  // --- ADD THIS MISSING ACTION ---
   async function advanceRunners(gameId, decisions) {
-    const auth = useAuthStore();
-    if (!auth.token) return;
-    try {
-      await fetch(`${auth.API_URL}/api/games/${gameId}/advance-runners`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${auth.token}`
-        },
-        body: JSON.stringify({ decisions })
-      });
-      // Websocket event will trigger the update
-    } catch (error) {
-      console.error("Error advancing runners:", error);
-    }
+  console.log('2. advanceRunners action called in the store.');
+  const auth = useAuthStore();
+  if (!auth.token) return;
+  try {
+    await fetch(`${auth.API_URL}/api/games/${gameId}/advance-runners`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${auth.token}`
+      },
+      body: JSON.stringify({ decisions })
+    });
+    // The websocket event will handle the state update
+  } catch (error) {
+    console.error("Error advancing runners:", error);
   }
+}
 
   async function submitTagUp(gameId, decisions) {
   const auth = useAuthStore();
@@ -190,21 +222,70 @@ export const useGameStore = defineStore('game', () => {
   }
 }
 
+// in src/stores/game.js
+async function initiateSteal(gameId) {
+  const auth = useAuthStore();
+  if (!auth.token) return;
+  try {
+    await fetch(`${auth.API_URL}/api/games/${gameId}/initiate-steal`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${auth.token}` },
+    });
+  } catch (error) {
+    console.error("Error initiating steal:", error);
+  }
+}
+// Don't forget to add `initiateSteal` to your return object!
+
 async function attemptSteal(gameId, fromBase) {
   const auth = useAuthStore();
   if (!auth.token) return;
   try {
     await fetch(`${auth.API_URL}/api/games/${gameId}/steal`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth.token}` },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${auth.token}`
+      },
       body: JSON.stringify({ fromBase })
     });
+    // The websocket event will handle the state update
   } catch (error) {
     console.error("Error attempting steal:", error);
   }
 }
 
+// in src/stores/game.js
+async function submitInfieldInDecision(gameId, sendRunner) {
+  const auth = useAuthStore();
+  if (!auth.token) return;
+  try {
+    await fetch(`${auth.API_URL}/api/games/${gameId}/infield-in-play`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth.token}` },
+      body: JSON.stringify({ sendRunner })
+    });
+  } catch (error) {
+    console.error("Error submitting infield in decision:", error);
+  }
+}
+
+async function resetRolls(gameId) {
+  const auth = useAuthStore();
+  if (!auth.token) return;
+  try {
+    await fetch(`${auth.API_URL}/api/games/${gameId}/reset-rolls`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${auth.token}` }
+    });
+  } catch (error) {
+    console.error('Error resetting rolls:', error);
+  }
+}
+
+
+
   return { game, gameState, gameEvents, batter, pitcher, lineups, rosters, setupState, 
-    fetchGame, submitPitch, submitSwing, fetchGameSetup, submitRoll, submitGameSetup,submitTagUp,
-    submitSubstitution, advanceRunners,setDefense,attemptSteal };
+    fetchGame, initiateSteal,submitPitch, submitSwing, fetchGameSetup, submitRoll, submitGameSetup,submitTagUp,
+    submitBaserunningDecisions,resolveDefensiveThrow,submitSubstitution, advanceRunners,setDefense,attemptSteal,submitInfieldInDecision,resetRolls };
 })

@@ -7,60 +7,28 @@ import { socket } from '@/services/socket';
 import PlayerCard from '@/components/PlayerCard.vue';
 import BaseballDiamond from '@/components/BaseballDiamond.vue';
 
+const showSubModal = ref(false);
 const route = useRoute();
 const gameStore = useGameStore();
 const authStore = useAuthStore();
 const gameId = route.params.id;
-const tagUpChoices = ref({});
+const choices = ref({});
 
 const selectedCard = ref(null);
-const showSubModal = ref(false);
 const playerToSubIn = ref(null);
 const baserunningChoices = ref({});
 // NEW: Local state for the checkbox
+
 const infieldIn = ref(gameStore.gameState?.infieldIn || false);
 
-// NEW: Computed to determine if I am the defensive player RIGHT NOW
-const amIDefensivePlayer = computed(() => {
-    if (!authStore.user || !gameStore.gameState) return false;
-    const offensiveTeam = gameStore.gameState.isTopInning ? gameStore.gameState.awayTeam : gameStore.gameState.homeTeam;
-    return authStore.user.userId !== offensiveTeam.userId;
-});
 
-const amIOffensivePlayer = computed(() => {
-    if (!authStore.user || !gameStore.gameState) return false;
-    const offensiveTeam = gameStore.gameState.isTopInning ? gameStore.gameState.awayTeam : gameStore.gameState.homeTeam;
-    return authStore.user.userId === offensiveTeam.userId;
-});
-
-const canAttemptSteal = computed(() => {
-    return amIOffensivePlayer.value && atBatStatus.value === 'pitching';
-});
-
-function handleStealAttempt(fromBase) {
-    if (!canAttemptSteal.value) return;
-    if (confirm(`Are you sure you want to attempt to steal from ${fromBase}B?`)) {
-        gameStore.attemptSteal(gameId, fromBase);
-    }
-}
-
-// NEW: Watch for changes to the checkbox and send to server
-watch(infieldIn, (newValue) => {
-    if (amIDefensivePlayer.value) {
-        gameStore.setDefense(gameId, newValue);
-    }
-});
-
-// NEW: Watch for updates from the server
-watch(() => gameStore.gameState?.infieldIn, (newValue) => {
-    infieldIn.value = newValue;
-});
+const REPLACEMENT_HITTER = { card_id: 'replacement_hitter', displayName: 'Replacement Hitter', control: null };
+const REPLACEMENT_PITCHER = { card_id: 'replacement_pitcher', displayName: 'Replacement Pitcher', control: 0, ip: 1 };
 
 const isMyTurn = computed(() => {
   if (!authStore.user || !gameStore.game) return false;
   return Number(authStore.user.userId) === Number(gameStore.game.current_turn_user_id);
 });
-
 const atBatStatus = computed(() => gameStore.gameState?.atBatStatus || 'pitching');
 
 const batterLineupInfo = computed(() => {
@@ -71,14 +39,10 @@ const batterLineupInfo = computed(() => {
     return lineup[pos];
 });
 
-const homePitcher = computed(() => gameStore.gameState?.isTopInning ? gameStore.pitcher : gameStore.lineups.home?.startingPitcher);
-const awayPitcher = computed(() => !gameStore.gameState?.isTopInning ? gameStore.pitcher : gameStore.lineups.away?.startingPitcher);
-
 const myTeam = computed(() => {
     if (!authStore.user || !gameStore.game) return null;
     return authStore.user.userId === gameStore.game.home_team_user_id ? 'home' : 'away';
 });
-
 const myLineup = computed(() => myTeam.value ? gameStore.lineups[myTeam.value] : null);
 const myRoster = computed(() => myTeam.value ? gameStore.rosters[myTeam.value] : []);
 
@@ -90,9 +54,11 @@ const myBenchAndBullpen = computed(() => {
     }
     return myRoster.value.filter(p => !onFieldIds.has(p.card_id));
 });
-
 const myBench = computed(() => myBenchAndBullpen.value.filter(p => p.control === null));
 const myBullpen = computed(() => myBenchAndBullpen.value.filter(p => p.control !== null));
+
+const homePitcher = computed(() => gameStore.gameState?.isTopInning ? gameStore.pitcher : gameStore.lineups.home?.startingPitcher);
+const awayPitcher = computed(() => !gameStore.gameState?.isTopInning ? gameStore.pitcher : gameStore.lineups.away?.startingPitcher);
 
 const homeBenchAndBullpen = computed(() => {
     if (!gameStore.lineups.home?.battingOrder || !gameStore.rosters.home) return [];
@@ -105,6 +71,27 @@ const awayBenchAndBullpen = computed(() => {
     const lineupIds = new Set(gameStore.lineups.away.battingOrder.map(s => s.player.card_id));
     if (gameStore.lineups.away.startingPitcher) { lineupIds.add(gameStore.lineups.away.startingPitcher.card_id); }
     return gameStore.rosters.away.filter(p => !lineupIds.has(p.card_id));
+});
+
+// NEW: Computed to determine if I am the defensive player RIGHT NOW
+
+const amIDefensivePlayer = computed(() => {
+  if (!authStore.user || !gameStore.game) return false;
+  // If it's my turn and the status is 'pitching', I must be on defense.
+  // If it's NOT my turn and the status is 'swinging', I must be on defense.
+  return (isMyTurn.value && atBatStatus.value === 'pitching') || 
+         (!isMyTurn.value && atBatStatus.value === 'swinging');
+});
+
+
+const amIOffensivePlayer = computed(() => {
+    if (!authStore.user || !gameStore.gameState) return false;
+    return !amIDefensivePlayer.value;
+});
+
+const canAttemptSteal = computed(() => {
+    // The steal option should only be available during the 'swinging' phase
+    return amIOffensivePlayer.value && atBatStatus.value === 'swinging';
 });
 
 const homeBench = computed(() => homeBenchAndBullpen.value.filter(p => p.control === null));
@@ -123,47 +110,93 @@ const outfieldDefense = computed(() => {
         }, 0);
 });
 
+function handleInitiateSteal() {
+    gameStore.initiateSteal(gameId);
+}
 function handlePitch() { gameStore.submitPitch(gameId); }
 function handleSwing() { gameStore.submitSwing(gameId); }
 function confirmBaserunning() {
-    gameStore.advanceRunners(gameId, baserunningChoices.value);
-    baserunningChoices.value = {};
+  console.log('1. "Confirm Decisions" button clicked. Sending:', baserunningChoices.value);
+  gameStore.advanceRunners(gameId, baserunningChoices.value);
+  baserunningChoices.value = {};
 }
 function confirmTagUp() {
     gameStore.submitTagUp(gameId, tagUpChoices.value);
     tagUpChoices.value = {}; // Reset choices
 }
+function confirmOffensiveDecisions() {
+    gameStore.submitBaserunningDecisions(gameId, baserunningChoices.value);
+    baserunningChoices.value = {};
+}
+function makeDefensiveThrow(base) {
+    gameStore.resolveDefensiveThrow(gameId, base);
+}
+
+function handleStealAttempt(fromBase) {
+    if (!canAttemptSteal.value) return;
+    if (confirm(`Are you sure you want to attempt to steal from base ${fromBase}?`)) {
+        gameStore.attemptSteal(gameId, fromBase);
+    }
+}
+
+// in GameView.vue <script setup>
+
+function handleInfieldInDecision(sendRunner) {
+
+    gameStore.submitInfieldInDecision(gameId, sendRunner);
+
+}
+
+
+
+// NEW: Watch for changes to the checkbox and send to server
+
+watch(infieldIn, (newValue) => {
+
+    if (amIDefensivePlayer.value) {
+
+        gameStore.setDefense(gameId, newValue);
+
+    }
+
+});
+
+
+
+// NEW: Watch for updates from the server
+
+watch(() => gameStore.gameState?.infieldIn, (newValue) => {
+
+    infieldIn.value = newValue;
+
+});
 
 function selectPlayerToSubIn(player) {
+    if (!isMyTurn.value) return;
     if (playerToSubIn.value?.card_id === player.card_id) {
-        playerToSubIn.value = null;
+        playerToSubIn.value = null; // Deselect
     } else {
         playerToSubIn.value = player;
     }
 }
 async function executeSubstitution(playerOut, position) {
-    if (!playerToSubIn.value) {
+    if (!isMyTurn.value || !playerToSubIn.value) {
         selectedCard.value = playerOut;
         return;
     }
-    
     const isIncomingPlayerPitcher = playerToSubIn.value.control !== null;
     const isOutgoingPlayerPitcher = position === 'P';
-
     if (isIncomingPlayerPitcher !== isOutgoingPlayerPitcher) {
         alert('You can only substitute a pitcher for a pitcher, or a position player for a position player.');
         playerToSubIn.value = null;
         return;
     }
-
     await gameStore.submitSubstitution(gameId, {
         playerInId: playerToSubIn.value.card_id,
         playerOutId: playerOut.card_id,
         position: position
     });
-
     playerToSubIn.value = null;
-    showSubModal.value = false;
 }
 
 onMounted(() => {
@@ -180,6 +213,36 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <div v-if="showSubModal" class="modal-overlay" @click="showSubModal = false">
+    <div class="sub-modal" @click.stop>
+      <h2>Make a Substitution</h2>
+      <div class="sub-panels">
+        <div class="sub-panel">
+          <h3>On the Field</h3>
+          <div class="sub-list" v-if="myLineup">
+            <div class="sub-item-header">Pitcher</div>
+            <div class="sub-item" @click="executeSubstitution(myLineup.startingPitcher, 'P')">{{ myLineup.startingPitcher?.name }}</div>
+            <div class="sub-item-header">Batting Order</div>
+            <div v-for="spot in myLineup.battingOrder" :key="spot.player.card_id" class="sub-item" @click="executeSubstitution(spot.player, spot.position)">
+                {{ spot.player.displayName }} ({{ spot.position }})
+            </div>
+          </div>
+        </div>
+        <div class="sub-panel">
+          <h3>Available from Bench/Bullpen</h3>
+          <p v-if="playerToSubIn" class="selection-info">Selected: <strong>{{ playerToSubIn.displayName }}</strong></p>
+          <div class="sub-list">
+            <div class="sub-item-header">Bullpen</div>
+            <div v-for="p in myBullpen" :key="p.card_id" class="sub-item available" @click="selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }}</div>
+            <div class="sub-item-header">Bench</div>
+            <div v-for="p in myBench" :key="p.card_id" class="sub-item available" @click="selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }}</div>
+          </div>
+        </div>
+      </div>
+      <button @click="showSubModal = false" class="close-btn">Cancel</button>
+    </div>
+  </div>
+
   <div v-if="selectedCard" class="modal-overlay" @click="selectedCard = null">
     <div @click.stop><PlayerCard :player="selectedCard" /></div>
   </div>
@@ -188,32 +251,30 @@ onUnmounted(() => {
     <div class="side-panels">
         <div class="lineup-panel">
             <h3>Away Lineup</h3>
-            <ol><li v-for="(spot, index) in gameStore.lineups.away.battingOrder" :key="spot.player.card_id" :class="{ 'now-batting': gameStore.gameState.isTopInning && index === gameStore.gameState.awayTeam.battingOrderPosition, 'sub-target': playerToSubIn && myTeam === 'away' && isMyTurn }" @click="executeSubstitution(spot.player, spot.position)"> {{ spot.player.displayName }} ({{ spot.position }}) </li></ol>
-            <div v-if="awayPitcher" class="pitcher-info" :class="{'sub-target': playerToSubIn && myTeam === 'away' && isMyTurn}" @click="executeSubstitution(awayPitcher, 'P')"> <hr /><strong>Pitching:</strong> {{ awayPitcher.name }} </div>
-            <div v-if="awayBullpen.length > 0"> <hr /><strong>Bullpen:</strong> <ul><li v-for="p in awayBullpen" :key="p.card_id" @click="isMyTurn && selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }} ({{p.ip}} IP)</li></ul> </div>
-            <div v-if="awayBench.length > 0"> <hr /><strong>Bench:</strong> <ul><li v-for="p in awayBench" :key="p.card_id" @click="isMyTurn && selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }} ({{p.displayPosition}})</li></ul> </div>
+            <ol><li v-for="(spot, index) in gameStore.lineups.away.battingOrder" :key="spot.player.card_id" :class="{ 'now-batting': gameStore.gameState.isTopInning && index === gameStore.gameState.awayTeam.battingOrderPosition }" @click="selectedCard = spot.player"> {{ spot.player.displayName }} ({{ spot.position }}) </li></ol>
+            <div v-if="awayPitcher" class="pitcher-info"> <hr /><strong>Pitching:</strong> {{ awayPitcher.name }} </div>
+            <div v-if="awayBullpen.length > 0"> <hr /><strong>Bullpen:</strong> <ul><li v-for="p in awayBullpen" :key="p.card_id" @click="selectedCard = p">{{ p.displayName }} ({{p.ip}} IP)</li></ul> </div>
+            <div v-if="awayBench.length > 0"> <hr /><strong>Bench:</strong> <ul><li v-for="p in awayBench" :key="p.card_id" @click="selectedCard = p">{{ p.displayName }} ({{p.displayPosition}})</li></ul> </div>
         </div>
     </div>
     
     <div class="main-view">
         <div class="at-bat-display">
-          <PlayerCard :player="gameStore.pitcher" role="Pitcher" />
+          <PlayerCard :player="gameStore.pitcher" role="Pitcher" :pitchResult="gameStore.gameState.pitchRollResult" />
           <div class="vs-area">
             <div class="vs">VS</div>
-            <div v-if="gameStore.gameState.pitchRollResult">
-            <div v-if="amIDefensivePlayer" class="pitch-result">
-                Pitch Roll: {{ gameStore.gameState.pitchRollResult.roll }}<br/>
-                Advantage: <strong>{{ gameStore.gameState.pitchRollResult.advantage.toUpperCase() }}</strong>
-            </div>
-            <div v-else class="pitch-result">
-                Pitch has been thrown!
-            </div>
-        </div>
-        <div v-if="gameStore.gameState.swingRollResult" class="swing-result">
-            Swing Roll: {{ gameStore.gameState.swingRollResult.roll }}<br/>
-            Outcome: <strong>{{ gameStore.gameState.swingRollResult.outcome }}</strong>
-        </div>
-        </div>
+            <div v-if="gameStore.gameState.pitchRollResult && (atBatStatus === 'swinging' && amIDefensivePlayer || atBatStatus === 'pitching')" class="pitch-result">
+    Pitch Roll: {{ gameStore.gameState.pitchRollResult.roll }}<br/>
+    Advantage: <strong>{{ gameStore.gameState.pitchRollResult.advantage.toUpperCase() }}</strong>
+  </div>
+            <div v-else-if="gameStore.gameState.pitchRollResult && atBatStatus === 'swinging' && !amIDefensivePlayer" class="pitch-result">
+    Pitch has been thrown!
+  </div>
+  <div v-if="gameStore.gameState.swingRollResult && atBatStatus === 'pitching'" class="swing-result">
+    Swing Roll: {{ gameStore.gameState.swingRollResult.roll }}<br/>
+    Outcome: <strong>{{ gameStore.gameState.swingRollResult.outcome }}</strong>
+  </div>
+          </div>
           <PlayerCard :player="gameStore.batter" role="Batter" :battingOrderPosition="gameStore.gameState.isTopInning ? gameStore.gameState.awayTeam.battingOrderPosition : gameStore.gameState.homeTeam.battingOrderPosition" :defensivePosition="batterLineupInfo?.position" />
         </div>
         <div class="scoreboard">
@@ -224,65 +285,92 @@ onUnmounted(() => {
         </div>
         <div class="diamond-area">
             <div class="outfield-defense" v-if="atBatStatus === 'baserunning-decision'"> Outfield Defense Total: +{{ outfieldDefense }} </div>
-            <BaseballDiamond 
-            :bases="gameStore.gameState.bases" 
-            :can-steal="canAttemptSteal"
-            @attempt-steal="handleStealAttempt"
-        />
+            <BaseballDiamond :bases="gameStore.gameState.bases" :can-steal="canAttemptSteal" @attempt-steal="handleStealAttempt" />
         </div>
         <div class="actions">
-    <div v-if="atBatStatus === 'baserunning-decision'"> </div>
-    <div v-else-if="atBatStatus === 'tag-up-decision'">
-        <div v-if="isMyTurn">
-          <h4>Tag-Up Decisions:</h4>
-          <div v-for="decision in gameStore.gameState.tagUpDecisions.runners" :key="decision.from">
-              Runner from {{ decision.from }}B ({{ decision.runner.name }} - Speed {{ decision.runner.speed }}):
-              <label><input type="checkbox" v-model="tagUpChoices[decision.from]"> Send Runner</label>
+        <div v-if="atBatStatus === 'steal-decision' && isMyTurn">
+          <h4>Steal Decisions:</h4>
+          <div v-for="decision in gameStore.gameState.currentPlay.decisions" :key="decision.from">
+            {{ decision.runner.name }} from {{decision.from}}B (Speed {{ decision.runner.speed }}):
+            <label><input type="checkbox" v-model="baserunningChoices[decision.from]"> Send</label>
           </div>
-          <button @click="confirmTagUp">Confirm Decisions</button>
-        </div>
-        <div v-else class="turn-indicator">Waiting for opponent to make tag-up decision...</div>
+          <button @click="confirmOffensiveDecisions">Attempt Steal</button>
+      </div>
+            <div class="actions-main">
+              <div v-if="gameStore.gameState.gameOver" class="game-over">
+                <h2>GAME OVER</h2>
+                <h3>{{ gameStore.gameState.winningTeam.toUpperCase() }} TEAM WINS!</h3>
+              </div>
+              <div v-else-if="atBatStatus === 'offensive-baserunning-decision'">
+    <div v-if="isMyTurn">
+      <h4>Baserunning Decisions:</h4>
+      <div v-for="decision in gameStore.gameState.currentPlay.decisions" :key="decision.from">
+          Runner from {{ decision.from }}B ({{ decision.runner.name }} - Speed {{ decision.runner.speed }}):
+          <label><input type="checkbox" v-model="baserunningChoices[decision.from]"> Send</label>
+      </div>
+      <button @click="confirmOffensiveDecisions">Confirm Decisions</button>
     </div>
-    <div v-else-if="!isMyTurn" class="turn-indicator">Waiting for opponent...</div>
-    <div v-else>
-        <div v-if="atBatStatus === 'pitching'" class="button-group">
-            <button @click="handlePitch()">Roll for Pitch</button>
-            <button @click="handlePitch('intentional_walk')">Intentionally Walk</button>
-        </div>
-        <div v-if="atBatStatus === 'swinging'" class="button-group">
-            <button @click="handleSwing()">Roll for Swing</button>
-            <button @click="handleSwing('bunt')">Bunt</button>
-    </div>
+    <div v-else class="turn-indicator">Waiting for opponent to make baserunning decision...</div>
 </div>
-        <div v-if="amIDefensivePlayer" class="defense-strategy">
-            <label>
-                <input type="checkbox" v-model="infieldIn" />
-                Infield In
-            </label>
-        </div>
-            <div v-if="atBatStatus === 'baserunning-decision'">
-                <div v-if="isMyTurn">
-                  <h4>Baserunning Decisions:</h4>
-                  <div v-for="decision in gameStore.gameState.baserunningDecisions.runners" :key="decision.from"> Runner from {{ decision.from }}B ({{ decision.runner.name }} - Speed {{ decision.runner.speed }}): <label><input type="checkbox" v-model="baserunningChoices[decision.from]"> Send Runner</label> </div>
-                  <button @click="confirmBaserunning">Confirm Decisions</button>
-                </div>
-                <div v-else class="turn-indicator">Waiting for opponent to make baserunning decision...</div>
+    <div v-else-if="atBatStatus === 'defensive-throw-decision'">
+        <div v-if="isMyTurn">
+            <h4>Defensive Throw Decision</h4>
+            <p>Choose where to make the play:</p>
+            <div v-for="(shouldSend, fromBase) in gameStore.gameState.currentPlay.choices" :key="fromBase">
+                <button v-if="shouldSend" @click="makeDefensiveThrow(fromBase == 1 ? 3 : 4)">
+                    Throw to {{ fromBase == 1 ? '3rd' : 'Home' }}
+                </button>
             </div>
-            <div v-else-if="!isMyTurn" class="turn-indicator">Waiting for opponent...</div>
+        </div>
+        <div v-else class="turn-indicator">Waiting for opponent...</div>
+    </div>
+              <div v-else-if="atBatStatus === 'tag-up-decision'">
+                  <div v-if="isMyTurn">
+                    <h4>Tag-Up Decisions:</h4>
+                    <div v-for="decision in gameStore.gameState.tagUpDecisions.runners" :key="decision.from"> Runner from {{ decision.from }}B ({{ decision.runner.name }} - Speed {{ decision.runner.speed }}): <label><input type="checkbox" v-model="tagUpChoices[decision.from]"> Send Runner</label> </div>
+                    <button @click="confirmTagUp">Confirm Decisions</button>
+                  </div>
+                  <div v-else class="turn-indicator">Waiting for opponent to make tag-up decision...</div>
+              </div>
+              <div v-else-if="atBatStatus === 'infield-in-decision'">
+                  <div v-if="isMyTurn">
+                    <h4>Infield In: Play at the Plate</h4>
+                    <p>Runner on third ({{ gameStore.gameState.infieldInDecision.runner.name }} - Speed {{ gameStore.gameState.infieldInDecision.runner.speed }}). What's the call?</p>
+                    <button @click="handleInfieldInDecision(true)">Send Runner Home</button>
+                    <button @click="handleInfieldInDecision(false)">Hold Runner at Third</button>
+                  </div>
+                  <div v-else class="turn-indicator">Waiting for opponent to make the call...</div>
+              </div>
+              <div v-if="!isMyTurn" class="turn-indicator">Waiting for opponent...</div>
+  <div v-else>
+          <div v-if="atBatStatus === 'pitching'" class="button-group">
+              <button @click="handlePitch()">Roll for Pitch</button>
+              <button @click="handlePitch('intentional_walk')">Intentionally Walk</button>
+              <button v-if="amIOffensivePlayer" @click="handleInitiateSteal()">Attempt Steal</button>
+          </div>
+      <div v-if="atBatStatus === 'swinging'" class="button-group">
+          <button @click="handleSwing()">Roll for Swing</button>
+          <button @click="handleSwing('bunt')">Bunt</button>
+      </div>
+  </div>
+</div>
+            <div class="actions-secondary">
+                <button @click="showSubModal = true" class="sub-btn" v-if="myLineup">Substitutions</button>
+                <div v-if="amIDefensivePlayer && atBatStatus === 'pitching'" class="defense-strategy"> <label> <input type="checkbox" v-model="infieldIn" /> Infield In </label> </div>
+            </div>
         </div>
         <div class="event-log">
             <h2>Game Log</h2>
             <ul><li v-for="(event, index) in gameStore.gameEvents" :key="index">{{ event.log_message }}</li></ul>
         </div>
     </div>
-
     <div class="side-panels">
         <div class="lineup-panel">
             <h3>Home Lineup</h3>
-            <ol><li v-for="(spot, index) in gameStore.lineups.home.battingOrder" :key="spot.player.card_id" :class="{ 'now-batting': !gameStore.gameState.isTopInning && index === gameStore.gameState.homeTeam.battingOrderPosition, 'sub-target': playerToSubIn && myTeam === 'home' && isMyTurn }" @click="executeSubstitution(spot.player, spot.position)"> {{ spot.player.displayName }} ({{ spot.position }}) </li></ol>
-             <div v-if="homePitcher" class="pitcher-info" :class="{'sub-target': playerToSubIn && myTeam === 'home' && isMyTurn}" @click="executeSubstitution(homePitcher, 'P')"> <hr /><strong>Pitching:</strong> {{ homePitcher.name }} </div>
-            <div v-if="homeBullpen.length > 0"> <hr /><strong>Bullpen:</strong> <ul><li v-for="p in homeBullpen" :key="p.card_id" @click="isMyTurn && selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }} ({{p.ip}} IP)</li></ul> </div>
-            <div v-if="homeBench.length > 0"> <hr /><strong>Bench:</strong> <ul><li v-for="p in homeBench" :key="p.card_id" @click="isMyTurn && selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }} ({{p.displayPosition}})</li></ul> </div>
+            <ol><li v-for="(spot, index) in gameStore.lineups.home.battingOrder" :key="spot.player.card_id" :class="{ 'now-batting': !gameStore.gameState.isTopInning && index === gameStore.gameState.homeTeam.battingOrderPosition, 'sub-target': playerToSubIn && myTeam === 'home' }" @click="executeSubstitution(spot.player, spot.position)"> {{ spot.player.displayName }} ({{ spot.position }}) </li></ol>
+             <div v-if="homePitcher" class="pitcher-info" :class="{'sub-target': playerToSubIn && myTeam === 'home'}" @click="executeSubstitution(homePitcher, 'P')"> <hr /><strong>Pitching:</strong> {{ homePitcher.name }} </div>
+            <div v-if="homeBullpen.length > 0"> <hr /><strong>Bullpen:</strong> <ul><li v-for="p in homeBullpen" :key="p.card_id" @click="selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }} ({{p.ip}} IP)</li></ul> </div>
+            <div v-if="homeBench.length > 0"> <hr /><strong>Bench:</strong> <ul><li v-for="p in homeBench" :key="p.card_id" @click="selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }} ({{p.displayPosition}})</li></ul> </div>
         </div>
     </div>
   </div>
@@ -334,13 +422,23 @@ onUnmounted(() => {
 .sub-item.available.selected { background-color: #007bff; color: white; }
 .selection-info { text-align: center; background: #fff8e1; padding: 0.5rem; border-radius: 4px; }
 .close-btn { margin-top: 1rem; }
-.lineup-panel li.sub-target { background-color: #ffc107; cursor: crosshair; }
-.pitcher-info.sub-target { background-color: #ffc107; cursor: crosshair; }
+.lineup-panel li.sub-target, .pitcher-info.sub-target { background-color: #ffc107; cursor: crosshair; }
 .side-panels ul li.selected { background-color: #007bff; color: white; }
+.pitcher-info.sub-target { background-color: #ffc107; cursor: crosshair; }
 .defense-strategy {
   margin-bottom: 1rem;
   font-weight: bold;
 }
 .button-group button {
     margin: 0 0.5rem;}
+    .game-over {
+  text-align: center;
+  padding: 1rem;
+  background-color: #28a745;
+  color: white;
+  border-radius: 8px;
+}
+.game-over h2 {
+  margin: 0;
+}
 </style>

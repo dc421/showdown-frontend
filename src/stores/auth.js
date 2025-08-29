@@ -218,19 +218,21 @@ async function fetchRosterDetails(rosterId) {
   }
 }
 
-  async function submitLineup(gameId, lineupData) {
-    if (!token.value) return;
-    try {
-      await fetch(`${API_URL}/api/games/${gameId}/lineup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token.value}` },
-        body: JSON.stringify(lineupData)
-      });
-    } catch (error) {
-      console.error('Failed to submit lineup:', error);
-      alert('Error submitting lineup.');
-    }
+  // in src/stores/auth.js
+async function submitLineup(gameId, lineupData) {
+  if (!token.value) return;
+  try {
+    await fetch(`${API_URL}/api/games/${gameId}/lineup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token.value}` },
+      body: JSON.stringify(lineupData)
+    });
+    // The WebSocket event will handle the redirect. There should be NO router.push here.
+  } catch (error) {
+    console.error('Failed to submit lineup:', error);
+    alert('Error submitting lineup.');
   }
+}
 
   async function fetchMyParticipantInfo(gameId) {
     if (!token.value) return null;

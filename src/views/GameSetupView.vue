@@ -14,6 +14,7 @@ const gameId = route.params.id;
 const homeTeamUserId = ref(null);
 const useDh = ref(true);
 const rollWinnerId = ref(null);
+const waitingForRematch = ref(false);
 
 const participants = computed(() => gameStore.setupState?.participants || []);
 const diceRolls = computed(() => gameStore.setupState?.rolls || {});
@@ -27,16 +28,24 @@ function determineRollWinner() {
   const [playerA, playerB] = participants.value;
   const rollA = diceRolls.value[playerA.user_id];
   const rollB = diceRolls.value[playerB.user_id];
-  if (rollA !== rollB) {
-    homeTeamUserId.value = rollA > rollB ? playerA.user_id : playerB.user_id;
+  if (rollA === rollB) {
+    // On a tie, show a message and call the reset function
+    waitingForRematch.value = true;
+    setTimeout(() => {
+        gameStore.resetRolls(gameId); // This will clear rolls for both players
+        waitingForRematch.value = false;
+    }, 2000); // Wait 2 seconds before resetting
+    return;
   }
+  
+  homeTeamUserId.value = rollA > rollB ? playerA.user_id : playerB.user_id;
+  socket.emit('choice-made', { gameId, homeTeamUserId: homeTeamUserId.value });
 }
 
-async function declareHomeTeam(homePlayer) {
-    await gameStore.submitGameSetup(gameId, {
-        homeTeamUserId: homePlayer.user_id,
-        useDh: useDh.value
-    });
+function declareHomeTeam(homePlayer) {
+    const newHomeId = homePlayer.user_id;
+    homeTeamUserId.value = newHomeId;
+    socket.emit('choice-made', { gameId, homeTeamUserId: newHomeId });
 }
 
 async function submitSetup() {
@@ -53,6 +62,10 @@ onMounted(() => {
   socket.emit('join-game-room', gameId);
   socket.on('roll-updated', () => gameStore.fetchGameSetup(gameId));
   socket.on('setup-complete', () => router.push(`/game/${gameId}/lineup`));
+  
+  // ADD THESE TWO LISTENERS
+  socket.on('choice-updated', (data) => { homeTeamUserId.value = data.homeTeamUserId; });
+  socket.on('dh-rule-updated', (data) => { useDh.value = data.useDh; });
 });
 
 onUnmounted(() => {
@@ -114,9 +127,9 @@ watch(diceRolls, () => {
         </div>
       </div>
       
-      <button @click="submitSetup" :disabled="!setupComplete" class="submit-btn">
-        Confirm and Proceed to Lineups
-      </button>
+      <button v-if="isHomeTeam" @click="submitSetup" :disabled="!setupComplete" class="submit-btn">
+  Confirm and Proceed to Lineups
+</button>
 
     </div>
     <div v-else>Loading...</div>

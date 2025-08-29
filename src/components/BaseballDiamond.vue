@@ -1,4 +1,4 @@
-script setup>
+<script setup>
 defineProps({
   bases: Object,
   canSteal: Boolean, // New prop to control button visibility

@@ -5,7 +5,8 @@ const props = defineProps({
   player: Object,
   role: String,
   battingOrderPosition: Number,
-  defensivePosition: String
+  defensivePosition: String,
+  pitchResult: Object // <-- ADD THIS NEW PROP
 });
 
 function formatRange(range) {
@@ -41,7 +42,14 @@ const fieldingDisplay = computed(() => {
         <p><strong>Fielding:</strong> {{ fieldingDisplay }}</p>
       </div>
       <div v-if="role === 'Pitcher'">
-        <p><strong>Control:</strong> <span class="key-stat">{{ player.control }}</span> | <strong>IP:</strong> {{ player.ip }}</p>
+      <p>
+        <strong>Control:</strong> 
+        <span class="key-stat">{{ player.control }}</span>
+        <span v-if="pitchResult?.penalty > 0" class="penalty">
+          (-{{ pitchResult.penalty }})
+        </span> 
+        | <strong>IP:</strong> {{ player.ip }}
+      </p>
       </div>
       <div class="chart">
         <strong>Outcome Chart:</strong>
@@ -68,6 +76,11 @@ p { margin: 0.25rem 0; }
     font-size: 1.5em;
     font-weight: bold;
     color: #007bff;
+}
+.penalty {
+  color: red;
+  font-weight: bold;
+  margin-left: 0.25rem;
 }
 .chart { margin-top: 0.5rem; }
 .chart ul { list-style: none; padding: 0; margin-top: 0.5rem; font-size: 0.85em; column-count: 2; }
