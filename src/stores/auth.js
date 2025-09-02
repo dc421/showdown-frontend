@@ -5,13 +5,14 @@ import router from '@/router'
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem('token') || null);
   const user = ref(JSON.parse(localStorage.getItem('user')) || null);
-  const rosters = ref([]);
+const myRoster = ref(null);
   const allPlayers = ref([]);
   const myGames = ref([]);
   const openGames = ref([]);
   const activeRosterCards = ref([]);
   const API_URL = import.meta.env.VITE_API_URL;
   const isAuthenticated = computed(() => !!token.value);
+    const availableTeams = ref([]); // New state for registration
 
   function setToken(newToken) {
     token.value = newToken;
@@ -34,8 +35,9 @@ export const useAuthStore = defineStore('auth', () => {
       if (!response.ok) throw new Error(data.message);
       
       setToken(data.token);
+      // The payload from the token now contains the full user and team object
       const payload = JSON.parse(atob(data.token.split('.')[1]));
-      setUser({ email: payload.email, userId: payload.userId });
+      setUser(payload);
 
       router.push('/dashboard');
     } catch (error) {
@@ -65,51 +67,62 @@ export const useAuthStore = defineStore('auth', () => {
   function logout() {
     token.value = null;
     user.value = null;
-    rosters.value = [];
-    myGames.value = [];
-    openGames.value = [];
-    activeRosterCards.value = [];
+    myRoster.value = null;
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     router.push('/login');
   }
 
-  async function fetchRosters() {
+  // in src/stores/auth.js
+async function fetchMyRoster() {
     if (!token.value) return;
     try {
-      const response = await fetch(`${API_URL}/api/rosters`, {
+      const response = await fetch(`${API_URL}/api/my-roster`, {
         headers: { 'Authorization': `Bearer ${token.value}` }
       });
-      if (!response.ok) throw new Error('Failed to fetch rosters');
-      rosters.value = await response.json();
+      if (!response.ok) throw new Error('Failed to fetch roster');
+      myRoster.value = await response.json();
     } catch (error) {
-      console.error('Failed to fetch rosters:', error);
+      console.error('Failed to fetch roster:', error);
     }
   }
 
   async function fetchAllPlayers() {
+  console.log('2. fetchAllPlayers action in auth.js was called.');
   if (!token.value) return;
   try {
     const response = await fetch(`${API_URL}/api/cards/player`, {
       headers: { 'Authorization': `Bearer ${token.value}` }
     });
+    console.log('3. Received response from server with status:', response.status);
     if (!response.ok) throw new Error('Failed to fetch player cards');
-    // The data is already processed by the server, just save it
-    allPlayers.value = await response.json();
+    
+    const players = await response.json();
+    allPlayers.value = players;
   } catch (error) {
     console.error('Failed to fetch players:', error);
   }
 }
 
-  async function createRoster(rosterData) {
+async function fetchAvailableTeams() {
+  console.log('2. fetchAvailableTeams action in auth.js was called.');
+  try {
+    const response = await fetch(`${API_URL}/api/available-teams`);
+    if (!response.ok) throw new Error('Failed to fetch teams');
+    const teamsData = await response.json();
+    console.log('3. Received available teams data from server:', teamsData);
+    availableTeams.value = teamsData;
+  } catch (error) {
+    console.error('Error fetching available teams:', error);
+  }
+}
+
+  async function saveRoster(rosterData) {
   if (!token.value) return;
   try {
-    const response = await fetch(`${API_URL}/api/rosters`, {
+    const response = await fetch(`${API_URL}/api/my-roster`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token.value}`
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token.value}` },
       body: JSON.stringify(rosterData)
     });
 
@@ -126,7 +139,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     // On success:
-    await fetchRosters();
+    await fetchMyRoster();
     router.push('/dashboard');
 
   } catch (error) {
@@ -162,35 +175,45 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function createGame(rosterId) {
-    if (!token.value) return;
-    try {
-      const response = await fetch(`${API_URL}/api/games`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token.value}` },
-        body: JSON.stringify({ roster_id: rosterId, home_or_away: 'home', league_designation: 'AL' })
-      });
-      if (!response.ok) throw new Error('Failed to create game');
-    } catch (error) {
-       console.error("Create game error:", error);
-       alert(`Error: ${error.message}`);
-    }
-  }
+  // in src/stores/auth.js
+async function createGame(rosterId) {
+  if (!token.value) return;
+  try {
+    const response = await fetch(`${API_URL}/api/games`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token.value}` },
+      body: JSON.stringify({ roster_id: rosterId, home_or_away: 'home', league_designation: 'AL' })
+    });
+    if (!response.ok) throw new Error('Failed to create game');
 
-  async function joinGame(gameId, rosterId) {
-    if (!token.value) return;
-    try {
-        const response = await fetch(`${API_URL}/api/games/${gameId}/join`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token.value}` },
-            body: JSON.stringify({ roster_id: rosterId })
-        });
-        if (!response.ok) throw new Error('Failed to join game');
-    } catch (error) {
-       console.error(error);
-       alert(`Error: ${error.message}`);
-    }
+    // This is the fix: Refresh the lists directly after the action is confirmed.
+    await fetchMyGames();
+    await fetchOpenGames();
+  } catch (error) {
+     console.error("Create game error:", error);
+     alert(`Error: ${error.message}`);
   }
+}
+
+  // in src/stores/auth.js
+async function joinGame(gameId, rosterId) {
+  if (!token.value) return;
+  try {
+      const response = await fetch(`${API_URL}/api/games/${gameId}/join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token.value}` },
+          body: JSON.stringify({ roster_id: rosterId })
+      });
+      if (!response.ok) throw new Error('Failed to join game');
+
+      // This is the fix: Refresh the lists directly after the action is confirmed.
+      await fetchMyGames();
+      await fetchOpenGames();
+  } catch (error) {
+     console.error(error);
+     alert(`Error: ${error.message}`);
+  }
+}
 
   // In src/stores/auth.js
 async function fetchRosterDetails(rosterId) {
@@ -201,7 +224,8 @@ async function fetchRosterDetails(rosterId) {
     });
     if (!response.ok) throw new Error('Failed to fetch roster details');
     const rosterPlayers = await response.json();
-
+    console.log('4. Received roster details from server:', rosterPlayers);
+    
     // Corrected logic to build the display position string
     rosterPlayers.forEach(p => {
       if (p.control !== null) {
@@ -249,9 +273,9 @@ async function submitLineup(gameId, lineupData) {
   }
 
   return { 
-    token, user, rosters, allPlayers, myGames, openGames, activeRosterCards, API_URL, router,
-    isAuthenticated, login, register, logout, fetchRosters, 
-    fetchAllPlayers, createRoster, fetchMyGames, fetchOpenGames, joinGame,
-    submitLineup, fetchRosterDetails, createGame, fetchMyParticipantInfo
+    token, user, allPlayers, myGames, openGames, activeRosterCards, API_URL, router,
+    isAuthenticated, login, register, logout, myRoster,fetchMyRoster, saveRoster,
+    fetchAllPlayers, fetchMyGames, fetchOpenGames, joinGame,fetchAvailableTeams,
+    submitLineup, fetchRosterDetails, createGame, fetchMyParticipantInfo,availableTeams
   }
 })

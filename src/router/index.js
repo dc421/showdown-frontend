@@ -8,6 +8,7 @@ import GameView from '../views/GameView.vue' // <-- IMPORT NEW VIEW
 import SetLineupView from '../views/SetLineupView.vue';
 import RegisterView from '../views/RegisterView.vue';
 import GameSetupView from '../views/GameSetupView.vue';
+import DevToolView from '../views/DevToolView.vue' // <-- ADD THIS
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -42,6 +43,12 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/game/:id',
+      name: 'game',
+      component: GameView,
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/game/:id/setup',
       name: 'game-setup',
       component: GameSetupView,
@@ -51,6 +58,12 @@ const router = createRouter({
       path: '/game/:id/lineup',
       name: 'set-lineup',
       component: SetLineupView,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/dev-tool/:id',
+      name: 'dev-tool',
+      component: DevToolView,
       meta: { requiresAuth: true }
     },
     {

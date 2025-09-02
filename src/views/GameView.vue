@@ -5,6 +5,7 @@ import { useGameStore } from '@/stores/game';
 import { useAuthStore } from '@/stores/auth';
 import { socket } from '@/services/socket';
 import PlayerCard from '@/components/PlayerCard.vue';
+import Linescore from '@/components/Linescore.vue';
 import BaseballDiamond from '@/components/BaseballDiamond.vue';
 
 const showSubModal = ref(false);
@@ -110,11 +111,49 @@ const outfieldDefense = computed(() => {
         }, 0);
 });
 
+// in GameView.vue
+const catcherArm = computed(() => {
+    if (!gameStore.gameState || !gameStore.lineups) return 0;
+    const defensiveLineup = gameStore.gameState.isTopInning ? gameStore.lineups.home.battingOrder : gameStore.lineups.away.battingOrder;
+    if (!defensiveLineup) return 0;
+
+    const catcher = defensiveLineup.find(spot => spot.position === 'C');
+    // The rating is stored in the fielding_ratings object under the 'C' key
+    return catcher?.player.fielding_ratings['C'] || 0;
+});
+
+// --- NEW: Computed properties to get team color data ---
+const homeTeamColors = computed(() => {
+    return {
+        primary: gameStore.teams?.home?.primary_color || '#343a40',
+        secondary: gameStore.teams?.home?.secondary_color || '#ffffff'
+    }
+});
+const awayTeamColors = computed(() => {
+    return {
+        primary: gameStore.teams?.away?.primary_color || '#343a40',
+        secondary: gameStore.teams?.away?.secondary_color || '#ffffff'
+    }
+});
+
+const pitcherTeamColors = computed(() => gameStore.gameState?.isTopInning ? homeTeamColors.value : awayTeamColors.value);
+const batterTeamColors = computed(() => gameStore.gameState?.isTopInning ? awayTeamColors.value : homeTeamColors.value);
+
+
 function handleInitiateSteal() {
     gameStore.initiateSteal(gameId);
 }
-function handlePitch() { gameStore.submitPitch(gameId); }
-function handleSwing() { gameStore.submitSwing(gameId); }
+function handlePitch(action = null) {
+  gameStore.submitPitch(gameId, action);
+}
+function handleSwing(action = null) {
+  gameStore.submitSwing(gameId, action);
+}
+// in GameView.vue
+function handleThrowForSteal() {
+  console.log('1. "Roll for Throw" button was clicked.');
+  gameStore.resolveSteal(gameId);
+}
 function confirmBaserunning() {
   console.log('1. "Confirm Decisions" button clicked. Sending:', baserunningChoices.value);
   gameStore.advanceRunners(gameId, baserunningChoices.value);
@@ -133,10 +172,17 @@ function makeDefensiveThrow(base) {
 }
 
 function handleStealAttempt(fromBase) {
-    if (!canAttemptSteal.value) return;
-    if (confirm(`Are you sure you want to attempt to steal from base ${fromBase}?`)) {
-        gameStore.attemptSteal(gameId, fromBase);
-    }
+  // --- FINAL DEBUG LOG ---
+  console.log('--- STEAL ATTEMPT HANDLER in GameView ---');
+  console.log('Received fromBase value:', fromBase, '(Type:', typeof fromBase, ')');
+
+  if (!canAttemptSteal.value) {
+      console.log('Steal aborted: canAttemptSteal is false.');
+      return;
+  }
+  if (confirm(`Are you sure you want to attempt to steal from base ${fromBase}?`)) {
+      gameStore.attemptSteal(gameId, fromBase);
+  }
 }
 
 // in GameView.vue <script setup>
@@ -198,12 +244,28 @@ async function executeSubstitution(playerOut, position) {
     });
     playerToSubIn.value = null;
 }
+// --- NEW: On-Deck Logic ---
+const defensiveTeamKey = computed(() => gameStore.gameState?.isTopInning ? 'homeTeam' : 'awayTeam');
+const defensiveNextBatterIndex = computed(() => {
+    if (!gameStore.gameState) return -1;
+    return gameStore.gameState[defensiveTeamKey.value].battingOrderPosition;
+});
 
-onMounted(() => {
-  gameStore.fetchGame(gameId);
+
+// in GameView.vue
+onMounted(async () => {
+  await gameStore.fetchGame(gameId);
+  
+  // --- THIS IS THE DEBUG LOG ---
+  console.log('--- GameView Mounted: Checking Store Data ---');
+  console.log('gameState:', gameStore.gameState);
+  console.log('gameEvents:', gameStore.gameEvents);
+
   socket.connect();
   socket.emit('join-game-room', gameId);
-  socket.on('game-updated', () => { gameStore.fetchGame(gameId); });
+  socket.on('game-updated', () => { 
+    gameStore.fetchGame(gameId);
+  });
 });
 
 onUnmounted(() => {
@@ -250,42 +312,71 @@ onUnmounted(() => {
   <div class="game-container" v-if="gameStore.gameState && gameStore.lineups?.home && gameStore.lineups?.away">
     <div class="side-panels">
         <div class="lineup-panel">
-            <h3>Away Lineup</h3>
-            <ol><li v-for="(spot, index) in gameStore.lineups.away.battingOrder" :key="spot.player.card_id" :class="{ 'now-batting': gameStore.gameState.isTopInning && index === gameStore.gameState.awayTeam.battingOrderPosition }" @click="selectedCard = spot.player"> {{ spot.player.displayName }} ({{ spot.position }}) </li></ol>
-            <div v-if="awayPitcher" class="pitcher-info"> <hr /><strong>Pitching:</strong> {{ awayPitcher.name }} </div>
-            <div v-if="awayBullpen.length > 0"> <hr /><strong>Bullpen:</strong> <ul><li v-for="p in awayBullpen" :key="p.card_id" @click="selectedCard = p">{{ p.displayName }} ({{p.ip}} IP)</li></ul> </div>
-            <div v-if="awayBench.length > 0"> <hr /><strong>Bench:</strong> <ul><li v-for="p in awayBench" :key="p.card_id" @click="selectedCard = p">{{ p.displayName }} ({{p.displayPosition}})</li></ul> </div>
+            <h3 :style="{ color: awayTeamColors.primary}">
+              <img v-if="gameStore.teams.away" :src="gameStore.teams.away.logo_url" class="lineup-logo" />
+              {{gameStore.teams.away.city}} Lineup
+            </h3>
+            <ol>
+            <li v-for="(spot, index) in gameStore.lineups.away.battingOrder" :key="spot.player.card_id" :class="{ 
+                      'now-batting': gameStore.gameState.isTopInning && index === gameStore.gameState.awayTeam.battingOrderPosition,
+                      'next-up': !gameStore.gameState.isTopInning && index === defensiveNextBatterIndex,
+                      'sub-target': playerToSubIn && myTeam === 'away' 
+                  }" @click="selectedCard = spot.player"> {{ index + 1 }}. {{ spot.player.displayName }} ({{ spot.position }}) </li></ol>
+            <div v-if="awayPitcher" class="pitcher-info"> <hr /><strong :style="{ color: awayTeamColors.primary}">Pitching:</strong> {{ awayPitcher.name }} </div>
+            <div v-if="awayBullpen.length > 0"> <hr /><strong :style="{ color: awayTeamColors.primary}">Bullpen:</strong> <ul><li v-for="p in awayBullpen" :key="p.card_id" @click="selectedCard = p">{{ p.displayName }} ({{p.ip}} IP)</li></ul> </div>
+            <div v-if="awayBench.length > 0"> <hr /><strong :style="{ color: awayTeamColors.primary}">Bench:</strong> <ul><li v-for="p in awayBench" :key="p.card_id" @click="selectedCard = p">{{ p.displayName }} ({{p.displayPosition}})</li></ul> </div>
         </div>
     </div>
     
     <div class="main-view">
-        <div class="at-bat-display">
-          <PlayerCard :player="gameStore.pitcher" role="Pitcher" :pitchResult="gameStore.gameState.pitchRollResult" />
+    <div class="at-bat-display">
+          <PlayerCard 
+            :player="gameStore.pitcher" 
+            role="Pitcher" 
+            :has-advantage="atBatStatus === 'swinging' ? gameStore.gameState.pitchRollResult?.advantage === 'pitcher' : null"
+            :primary-color="pitcherTeamColors.primary"
+          />
           <div class="vs-area">
-            <div class="vs">VS</div>
-            <div v-if="gameStore.gameState.pitchRollResult && (atBatStatus === 'swinging' && amIDefensivePlayer || atBatStatus === 'pitching')" class="pitch-result">
-    Pitch Roll: {{ gameStore.gameState.pitchRollResult.roll }}<br/>
-    Advantage: <strong>{{ gameStore.gameState.pitchRollResult.advantage.toUpperCase() }}</strong>
-  </div>
-            <div v-else-if="gameStore.gameState.pitchRollResult && atBatStatus === 'swinging' && !amIDefensivePlayer" class="pitch-result">
-    Pitch has been thrown!
-  </div>
-  <div v-if="gameStore.gameState.swingRollResult && atBatStatus === 'pitching'" class="swing-result">
-    Swing Roll: {{ gameStore.gameState.swingRollResult.roll }}<br/>
-    Outcome: <strong>{{ gameStore.gameState.swingRollResult.outcome }}</strong>
-  </div>
+          <div class="action-box">
+        <!-- Show button if it's the defensive player's turn to pitch -->
+        <button class="action-button tactile-button" v-if="atBatStatus === 'pitching'" @click="handlePitch()"><strong>ROLL FOR PITCH</strong></button>
+        
+        <div v-else-if="gameStore.gameState.pitchRollResult" class="result-box" :style="{ backgroundColor: pitcherTeamColors.primary, borderColor: pitcherTeamColors.secondary }">
+                Pitch: {{ gameStore.gameState.pitchRollResult.roll }}
+              </div>
+              </div>
+              <div class="vs">VS</div>
+
+    <div class="action-box">
+              <button v-if="isMyTurn && atBatStatus === 'swinging' && !amIDefensivePlayer" @click="handleSwing()">Roll for Swing</button>
+             <!-- <div v-else-if="atBatStatus === 'pitching' && gameStore.gameState.swingRollResult" class="result-box" :style="{ backgroundColor: batterTeamColors.primary, borderColor: batterTeamColors.secondary }"> -->
+             <!--   Swing: <strong>{{ gameStore.gameState.swingRollResult.roll }}</strong> | <strong class="outcome-text">{{ gameStore.gameState.swingRollResult.outcome }}</strong> -->
+             <!-- </div> -->
+            </div>
+  <div v-if="gameStore.gameState.stealRollResult" class="steal-result">
+    Catcher Throw: {{ gameStore.gameState.stealRollResult.total }}<br/>
+    (Arm {{ gameStore.gameState.stealRollResult.catcherArm }} + Roll {{ gameStore.gameState.stealRollResult.throwRoll }})<br/>
+    Outcome: <strong>{{ gameStore.gameState.stealRollResult.outcome }}</strong>
+</div>
           </div>
-          <PlayerCard :player="gameStore.batter" role="Batter" :battingOrderPosition="gameStore.gameState.isTopInning ? gameStore.gameState.awayTeam.battingOrderPosition : gameStore.gameState.homeTeam.battingOrderPosition" :defensivePosition="batterLineupInfo?.position" />
-        </div>
-        <div class="scoreboard">
-            <div class="team-score">Away: {{ gameStore.gameState.awayScore }}</div>
-            <div class="inning-display"> <div class="inning-arrow" :class="{ top: gameStore.gameState.isTopInning }">▲</div> <div>{{ gameStore.gameState.inning }}</div> <div class="inning-arrow" :class="{ bottom: !gameStore.gameState.isTopInning }">▼</div> </div>
-            <div class="team-score">Home: {{ gameStore.gameState.homeScore }}</div>
-            <div class="outs-display">Outs: {{ gameStore.gameState.outs }}</div>
+          <PlayerCard 
+            :player="gameStore.batter" 
+            role="Batter" 
+            :has-advantage="atBatStatus === 'swinging' ? gameStore.gameState.pitchRollResult?.advantage === 'batter' : null"
+            :primary-color="batterTeamColors.primary"
+            :battingOrderPosition="gameStore.gameState.isTopInning ? gameStore.gameState.awayTeam.battingOrderPosition : gameStore.gameState.homeTeam.battingOrderPosition"
+            :defensivePosition="batterLineupInfo?.position"
+          />
         </div>
         <div class="diamond-area">
             <div class="outfield-defense" v-if="atBatStatus === 'baserunning-decision'"> Outfield Defense Total: +{{ outfieldDefense }} </div>
-            <BaseballDiamond :bases="gameStore.gameState.bases" :can-steal="canAttemptSteal" @attempt-steal="handleStealAttempt" />
+            <BaseballDiamond 
+    :bases="gameStore.gameState.bases" 
+    :can-steal="canAttemptSteal"
+    :catcherArm="catcherArm"
+    :at-bat-status="atBatStatus"
+    @attempt-steal="handleStealAttempt"
+/>
         </div>
         <div class="actions">
         <div v-if="atBatStatus === 'steal-decision' && isMyTurn">
@@ -296,6 +387,14 @@ onUnmounted(() => {
           </div>
           <button @click="confirmOffensiveDecisions">Attempt Steal</button>
       </div>
+      <div v-if="atBatStatus === 'defensive-steal-throw'">
+                <div v-if="isMyTurn">
+                    <h4>Steal Attempt In Progress!</h4>
+                    <p>{{ gameStore.gameState.stealAttempt.runner.name }} is attempting to steal!</p>
+                    <button @click="handleThrowForSteal">Roll for Throw</button>
+                </div>
+                <div v-else class="turn-indicator">Waiting for the defense to make the throw...</div>
+            </div>
             <div class="actions-main">
               <div v-if="gameStore.gameState.gameOver" class="game-over">
                 <h2>GAME OVER</h2>
@@ -344,12 +443,10 @@ onUnmounted(() => {
               <div v-if="!isMyTurn" class="turn-indicator">Waiting for opponent...</div>
   <div v-else>
           <div v-if="atBatStatus === 'pitching'" class="button-group">
-              <button @click="handlePitch()">Roll for Pitch</button>
-              <button @click="handlePitch('intentional_walk')">Intentionally Walk</button>
+              <button class="action-button tactile-button" @click="handlePitch('intentional_walk')">Intentional Walk</button>
               <button v-if="amIOffensivePlayer" @click="handleInitiateSteal()">Attempt Steal</button>
           </div>
       <div v-if="atBatStatus === 'swinging'" class="button-group">
-          <button @click="handleSwing()">Roll for Swing</button>
           <button @click="handleSwing('bunt')">Bunt</button>
       </div>
   </div>
@@ -366,11 +463,18 @@ onUnmounted(() => {
     </div>
     <div class="side-panels">
         <div class="lineup-panel">
-            <h3>Home Lineup</h3>
-            <ol><li v-for="(spot, index) in gameStore.lineups.home.battingOrder" :key="spot.player.card_id" :class="{ 'now-batting': !gameStore.gameState.isTopInning && index === gameStore.gameState.homeTeam.battingOrderPosition, 'sub-target': playerToSubIn && myTeam === 'home' }" @click="executeSubstitution(spot.player, spot.position)"> {{ spot.player.displayName }} ({{ spot.position }}) </li></ol>
-             <div v-if="homePitcher" class="pitcher-info" :class="{'sub-target': playerToSubIn && myTeam === 'home'}" @click="executeSubstitution(homePitcher, 'P')"> <hr /><strong>Pitching:</strong> {{ homePitcher.name }} </div>
-            <div v-if="homeBullpen.length > 0"> <hr /><strong>Bullpen:</strong> <ul><li v-for="p in homeBullpen" :key="p.card_id" @click="selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }} ({{p.ip}} IP)</li></ul> </div>
-            <div v-if="homeBench.length > 0"> <hr /><strong>Bench:</strong> <ul><li v-for="p in homeBench" :key="p.card_id" @click="selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }} ({{p.displayPosition}})</li></ul> </div>
+            <h3 :style="{ color: homeTeamColors.primary }">
+              <img v-if="gameStore.teams.home" :src="gameStore.teams.home.logo_url" class="lineup-logo" />
+              {{gameStore.teams.home.city}} Lineup
+            </h3>
+            <ol><li v-for="(spot, index) in gameStore.lineups.home.battingOrder" :key="spot.player.card_id" :class="{ 
+                      'now-batting': !gameStore.gameState.isTopInning && index === gameStore.gameState.homeTeam.battingOrderPosition,
+                      'next-up': gameStore.gameState.isTopInning && index === defensiveNextBatterIndex,
+                      'sub-target': playerToSubIn && myTeam === 'home' 
+                  }" @click="executeSubstitution(spot.player, spot.position)"> {{ index + 1 }}. {{ spot.player.displayName }} ({{ spot.position }}) </li></ol>
+             <div v-if="homePitcher" class="pitcher-info" :class="{'sub-target': playerToSubIn && myTeam === 'home'}" @click="executeSubstitution(homePitcher, 'P')"> <hr /><strong :style="{ color: homeTeamColors.primary }">Pitching:</strong> {{ homePitcher.name }} </div>
+            <div v-if="homeBullpen.length > 0"> <hr /><strong :style="{ color: homeTeamColors.primary }">Bullpen:</strong> <ul><li v-for="p in homeBullpen" :key="p.card_id" @click="selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }} ({{p.ip}} IP)</li></ul> </div>
+            <div v-if="homeBench.length > 0"> <hr /><strong :style="{ color: homeTeamColors.primary }">Bench:</strong> <ul><li v-for="p in homeBench" :key="p.card_id" @click="selectPlayerToSubIn(p)" :class="{selected: playerToSubIn?.card_id === p.card_id}">{{ p.displayName }} ({{p.displayPosition}})</li></ul> </div>
         </div>
     </div>
   </div>
@@ -379,7 +483,6 @@ onUnmounted(() => {
 
 <style scoped>
 .game-container { display: grid; grid-template-columns: 1fr 2.5fr 1fr; gap: 1rem; max-width: 1600px; margin: 1rem auto; font-family: sans-serif; }
-.now-batting { background-color: #fff8e1; font-weight: bold; }
 .at-bat-display { display: flex; justify-content: center; align-items: flex-start; gap: 2rem; margin-bottom: 1.5rem; }
 .vs-area { text-align: center; padding-top: 5rem; position: relative; }
 .actions { text-align: center; margin-bottom: 1.5rem; min-height: 50px; }
@@ -393,13 +496,12 @@ onUnmounted(() => {
 .inning-arrow { opacity: 0.2; }
 .inning-arrow.top, .inning-arrow.bottom { opacity: 1; }
 .outs-display { grid-column: 1 / 4; font-size: 1.2rem; margin-top: 0.5rem; }
-.actions button { padding: 0.75rem 1.5rem; font-size: 1.2rem; cursor: pointer; }
-.actions button:disabled { cursor: not-allowed; background-color: #ccc; }
 .turn-indicator { font-style: italic; color: #555; padding-top: 1rem; }
 .side-panels { display: flex; flex-direction: column; gap: 1rem; }
 .lineup-panel { background: #f9f9f9; padding: 1rem; border-radius: 8px; }
 .lineup-panel h3 { margin-top: 0; }
-.lineup-panel ol, .lineup-panel ul { padding-left: 20px; margin: 0.5rem 0; }
+.lineup-panel ol { padding-left: 0px; margin: 0.5rem 0; list-style: none;}
+.lineup-panel ul { padding-left: 17px; margin: 0.5rem 0; list-style: none;}
 .lineup-panel li { cursor: pointer; padding: 2px 0; }
 .lineup-panel li:hover { text-decoration: underline; }
 .pitcher-info { font-weight: bold; margin-top: 0.5rem; }
@@ -426,6 +528,7 @@ onUnmounted(() => {
 .side-panels ul li.selected { background-color: #007bff; color: white; }
 .pitcher-info.sub-target { background-color: #ffc107; cursor: crosshair; }
 .defense-strategy {
+  margin-top: .25rem;
   margin-bottom: 1rem;
   font-weight: bold;
 }
@@ -438,7 +541,113 @@ onUnmounted(() => {
   color: white;
   border-radius: 8px;
 }
+.swing-result .outcome-text {
+  font-size: 2rem; /* Or any size you like */
+  color: #0056b3; /* A slightly darker blue for emphasis */
+}
 .game-over h2 {
   margin: 0;
+}
+.action-box {
+  min-height: 50px;
+  margin-top: 1rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.steal-result {
+  margin-top: 1rem;
+  background: #ffe3e3; /* Reddish for a defensive play */
+  padding: 0.5rem;
+  border-radius: 4px;
+  border: 1px solid #ffc107;
+}
+.lineup-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0;
+}
+.lineup-logo {
+  height: 24px;
+  width: 24px;
+  border-radius: 50%;
+}
+.vs-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding-top: 1rem; /* Reduced padding */
+}
+.vs {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #888;
+  margin: 0.5rem 0;
+}
+/* This is the base style for ALL action buttons */
+.actions button {
+  padding: 0.75rem 1.5rem;
+  font-size: 5rem;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s ease-in-out;
+  margin: 0 0.5rem;
+}
+
+/* This is the specific style for our "tactile" buttons */
+.actions .tactile-button {
+  /* Size and Shape */
+  padding: .5rem 1rem;
+  font-size: 1rem;
+  border-radius: 5px; /* Rounded edges */
+
+  /* 3D Effect */
+  
+  color: #3A3A3A;
+  border: 1px solid #495057;
+
+  transition: all 0.1s ease-in-out;
+  cursor: pointer; /* <-- THIS IS THE NEW LINE */
+}
+
+.actions .tactile-button:hover {
+  background-color: #E4E4E4; /* Slightly lighter on hover */
+}
+
+.actions .tactile-button:active {
+  background-color: #C4C4C4; /* A solid, neutral gray */
+  box-shadow: none;
+}
+
+/* This styles the main "Roll" button in the vs-area */
+.vs-area .action-button {
+  padding: .5rem .75rem;
+  font-size: 1.2rem;
+  cursor: pointer; /* <-- THIS IS THE NEW LINE */
+}
+.result-box {
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: bold;
+  color: white;
+  text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+  border: 2px solid;
+  text-align: center;
+}
+.result-box .outcome-text {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+.now-batting { 
+  background-color: #fff8e1; 
+  font-weight: bold; 
+  font-style: normal !important;
+  color: #000 !important;
+}
+.next-up {
+  background-color: #e9ecef; /* A neutral light gray */
+  color: #000 !important;
 }
 </style>

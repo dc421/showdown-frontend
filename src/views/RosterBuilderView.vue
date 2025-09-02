@@ -2,12 +2,13 @@
 import { ref, computed, onMounted } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import { useRouter } from 'vue-router';
+import PlayerCard from '@/components/PlayerCard.vue'; // Import the PlayerCard component
 
 const authStore = useAuthStore();
 const router = useRouter();
+const selectedCard = ref(null);
 
 // --- STATE ---
-const newRosterName = ref('');
 const filterPosition = ref('ALL');
 const draggedItem = ref(null);
 
@@ -24,8 +25,19 @@ const allPlayersOnRoster = computed(() => [
     ...roster.value.bench
 ]);
 const playerCount = computed(() => allPlayersOnRoster.value.length);
-const totalPoints = computed(() => allPlayersOnRoster.value.reduce((sum, p) => sum + (p.points || 0), 0));
-
+const totalPoints = computed(() => {
+  return allPlayersOnRoster.value.reduce((sum, player) => {
+    // A player is on the bench if they are in the benchPlayers array.
+    const isBenched = benchPlayers.value.some(p => p.card_id === player.card_id);
+    const cost = (isBenched && player.control === null) ? Math.round(player.points / 5) : player.points;
+    return sum + cost;
+  }, 0);
+});
+const starterPlayerIds = computed(() => {
+    const lineupIds = lineupPlayers.value.map(p => p.card_id);
+    const spIds = startingPitchersOnRoster.value.map(p => p.card_id);
+    return new Set([...lineupIds, ...spIds]);
+});
 const availablePlayers = computed(() => {
   return authStore.allPlayers
     .filter(p => !allPlayersOnRoster.value.some(rp => rp.card_id === p.card_id))
@@ -117,7 +129,7 @@ function onDrop(event, to, targetPosition = null) {
      if(player.control !== null) { if(playerFromRoster) addPlayer(player); draggedItem.value = null; return; }
     roster.value.bench.push(player);
   } else if (from === 'available') {
-    addPlayer(player);
+      addPlayer(player);
   }
   draggedItem.value = null;
 }
@@ -131,7 +143,7 @@ function addPlayer(player) {
     const preferredOrder = ['C', 'SS', '2B', '3B', 'CF', 'LF', 'RF', '1B', 'DH'];
     let placed = false;
     for (const pos of preferredOrder) {
-      if (!roster.value.lineup[pos] && p_pos.includes(pos)) {
+      if (!roster.value.lineup[pos] && isPlayerEligibleForPosition(player, pos)) {
         roster.value.lineup[pos] = player;
         placed = true;
         break;
@@ -156,29 +168,94 @@ function removePlayer(playerToRemove) {
 
 
 async function saveRoster() {
-  if (!isRosterValid.value) {
-      return alert('Your roster is invalid. Please ensure you have 20 players under 5000 points, with 9 players in the lineup, 4 SPs on staff, no duplicate players, and all required defensive positions are covered.');
+  // Build the detailed list of cards with their assignments
+  const cardsToSave = [];
+  
+  // Lineup Players
+  for (const pos in roster.value.lineup) {
+    if (roster.value.lineup[pos]) {
+      cardsToSave.push({
+        card_id: roster.value.lineup[pos].card_id,
+        is_starter: true,
+        assignment: pos
+      });
+    }
   }
-  const starters = [
-      ...lineupPlayers.value,
-      ...startingPitchersOnRoster.value
-  ];
+  // Pitching Staff
+  roster.value.pitchingStaff.forEach(p => {
+    cardsToSave.push({
+      card_id: p.card_id,
+      is_starter: p.displayPosition === 'SP',
+      assignment: 'PITCHING_STAFF'
+    });
+  });
+  // Bench Players
+  roster.value.bench.forEach(p => {
+    cardsToSave.push({
+      card_id: p.card_id,
+      is_starter: false,
+      assignment: 'BENCH'
+    });
+  });
+
   const rosterData = {
-    roster_name: newRosterName.value,
-    card_ids: allPlayersOnRoster.value.map(p => p.card_id),
-    starter_ids: starters.map(p => p.card_id)
+    cards: cardsToSave
   };
-  await authStore.createRoster(rosterData);
+  await authStore.saveRoster(rosterData);
 }
 
-onMounted(() => {
+// in src/views/RosterBuilderView.vue
+onMounted(async () => {
   if (authStore.allPlayers.length === 0) {
-    authStore.fetchAllPlayers();
+    await authStore.fetchAllPlayers();
+  }
+  
+  if (authStore.myRoster && authStore.myRoster.cards) {
+    const savedCards = authStore.myRoster.cards;
+
+    // --- THIS IS THE FIX ---
+    // We must process the saved cards to create the displayName and displayPosition properties
+    const allPlayersForContext = authStore.allPlayers;
+    const nameCounts = {};
+    allPlayersForContext.forEach(p => { nameCounts[p.name] = (nameCounts[p.anme] || 0) + 1; });
+
+    savedCards.forEach(p => {
+        p.displayName = nameCounts[p.name] > 1 ? `${p.name} (${p.team})` : p.name;
+        if (p.control !== null) {
+            p.displayPosition = Number(p.ip) > 3 ? 'SP' : 'RP';
+        } else {
+            const positions = p.fielding_ratings ? Object.keys(p.fielding_ratings).join(',') : 'DH';
+            p.displayPosition = positions.replace(/LFRF/g, 'LF/RF');
+        }
+    });
+    // --- End of Fix ---
+
+    const newRoster = {
+        lineup: { C: null, '1B': null, '2B': null, SS: null, '3B': null, LF: null, CF: null, RF: null, DH: null },
+        pitchingStaff: [],
+        bench: []
+    };
+
+    savedCards.forEach(card => {
+        if (card.assignment === 'PITCHING_STAFF') {
+            newRoster.pitchingStaff.push(card);
+        } else if (card.assignment === 'BENCH') {
+            newRoster.bench.push(card);
+        } else if (card.assignment in newRoster.lineup) {
+            newRoster.lineup[card.assignment] = card;
+        }
+    });
+
+    roster.value = newRoster;
   }
 });
 </script>
 
 <template>
+  <!-- Modal for viewing player cards -->
+  <div v-if="selectedCard" class="modal-overlay" @click="selectedCard = null">
+    <div @click.stop><PlayerCard :player="selectedCard" /></div>
+  </div>
   <div class="builder-container">
     <div class="available-players-section panel">
       <div class="panel-header">
@@ -204,15 +281,24 @@ onMounted(() => {
           class="player-item"
           draggable="true"
           @dragstart="onDragStart($event, player, 'available')">
-          <span>{{ player.displayName }} ({{ player.displayPosition }})</span>
-          <span>{{ player.points }} pts</span>
+          
+          <div class="player-info">
+            <span class="player-name">{{ player.displayName }} ({{ player.displayPosition }})</span>
+            <span class="view-icon" @click.stop="selectedCard = player" title="View Card">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </span>
+          </div>
+          
+          <div class="player-actions">
+            <span>{{ player.points }} pts</span>
+            <button @click.stop="addPlayer(player)" class="add-btn">+</button>
+          </div>
         </div>
       </div>
     </div>
     
     <div class="roster-section">
         <div class="roster-header">
-            <input type="text" v-model="newRosterName" placeholder="Enter Roster Name..." />
             <div class="roster-stats">
                 <span>Players: {{ playerCount }} / 20</span>
                 <span :class="{ 'over-limit': totalPoints > 5000 }">Points: {{ totalPoints }} / 5000</span>
@@ -265,7 +351,12 @@ onMounted(() => {
 .roster-section { grid-row: 1 / 3; display: flex; flex-direction: column; }
 .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
 .player-list { flex-grow: 1; overflow-y: auto; border: 1px solid #ddd; background: white; border-radius: 4px; }
-.player-item { display: flex; justify-content: space-between; padding: 0.5rem; cursor: pointer; border-bottom: 1px solid #eee; }
+.player-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; cursor: grab; border-bottom: 1px solid #eee; }
+.player-info { display: flex; align-items: center; gap: 0.5rem; }
+.view-icon { cursor: pointer; color: #6c757d; }
+.view-icon:hover { color: #007bff; }
+.player-actions { display: flex; align-items: center; gap: 0.5rem; }
+.add-btn { background: #28a745; color: white; border: none; border-radius: 50%; width: 24px; height: 24px; font-size: 16px; line-height: 24px; cursor: pointer; }
 .roster-header { display: flex; gap: 1rem; align-items: center; background: #e9ecef; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;}
 .roster-header input { flex-grow: 1; padding: 0.75rem; font-size: 1.1rem; }
 .roster-stats { font-weight: bold; text-align: center; white-space: nowrap; }
@@ -275,13 +366,10 @@ onMounted(() => {
 .lineup-position { padding: 0.5rem; border: 1px dashed #ccc; border-radius: 4px; min-height: 50px; font-size: 0.9em; }
 .staff-area { flex-grow: 1; display: flex; flex-direction: column; gap: 0.5rem; }
 .bench-area { border: 1px dashed #ccc; border-radius: 4px; padding: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-content: flex-start; min-height: 50px; }
-.player-chip.illegal-placement {
-  border: 2px solid #dc3545; /* A bright red border */
-  background-color: #ffdddd; /* A light red background */
-}
-.player-chip { background-color: #dee2e6; padding: 0.25rem 0.5rem; border-radius: 12px; cursor: grab; font-size: 0.85em; }
+.player-chip { background-color: #dee2e6; padding: 0.25rem 0.5rem; border-radius: 12px; cursor: pointer; font-size: 0.85em; }
 .player-chip:hover { background-color: #ffdddd; }
 .player-chip small { color: #495057; }
 .over-limit { color: #dc3545; }
 .drop-zone:hover { border-color: #007bff; }
+.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 1000; }
 </style>

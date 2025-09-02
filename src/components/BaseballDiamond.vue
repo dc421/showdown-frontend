@@ -1,65 +1,81 @@
 <script setup>
+import RunnerCard from './RunnerCard.vue';
+
 defineProps({
   bases: Object,
-  canSteal: Boolean, // New prop to control button visibility
+  canSteal: Boolean,
+  catcherArm: Number,
+  atBatStatus: String,
 });
 const emit = defineEmits(['attempt-steal']);
-
-const getLastName = (runner) => {
-    if (!runner || !runner.name) return '';
-    return runner.name.split(' ').pop();
-}
 </script>
 
 <template>
   <div class="diamond-container">
-    <svg viewBox="0 0 100 100">
-    <polygon points="50,95 5,50 50,5 95,50" class="grass" />
-      <path d="M 50 95 L 95 50 L 50 5 L 5 50 Z" class="base-path" />
+    <!-- Runner slots are now absolutely positioned divs -->
+    <div class="runner-slot" style="top: 48%; left: 78%;">
+      <RunnerCard v-if="bases.first" :runner="bases.first" />
+    </div>
+    <div class="runner-slot" style="top: 27%; left: 50%;">
+      <RunnerCard v-if="bases.second" :runner="bases.second" />
+    </div>
+    <div class="runner-slot" style="top: 48%; left: 22%;">
+      <RunnerCard v-if="bases.third" :runner="bases.third" />
+    </div>
 
-      <rect x="47" y="89" width="6" height="6" class="base" transform="rotate(45 50 92)" />
-      <rect x="89" y="47" width="6" height="6" class="base" />
-      <rect x="47" y="5" width="6" height="6" class="base" />
-      <rect x="5" y="47" width="6" height="6" class="base" />
-      
-      <g v-if="bases.third" class="runner-group">
-        <circle cx="15" cy="50" r="5" class="runner" />
-        <text x="15" y="50" class="runner-text">{{ bases.third.speed }}</text>
-        <text x="15" y="42" class="runner-name">{{ getLastName(bases.third) }}</text>
-      </g>
-      <g v-if="bases.second" class="runner-group">
-        <circle cx="50" cy="15" r="5" class="runner" />
-        <text x="50" y="15" class="runner-text">{{ bases.second.speed }}</text>
-        <text x="50" y="7" class="runner-name">{{ getLastName(bases.second) }}</text>
-        <foreignObject x="35" y="22" width="30" height="15">
-            <button v-if="canSteal" @click="emit('attempt-steal', 2)">Steal 3rd</button>
-        </foreignObject>
-      </g>
-      <g v-if="bases.first" class="runner-group">
-        <circle cx="85" cy="50" r="5" class="runner" />
-        <text x="85" y="50" class="runner-text">{{ bases.first.speed }}</text>
-        <text x="85" y="42" class="runner-name">{{ getLastName(bases.first) }}</text>
-        <foreignObject x="70" y="57" width="30" height="15">
-            <button v-if="canSteal" @click="emit('attempt-steal', 1)">Steal 2nd</button>
-        </foreignObject>
-      </g>
-    </svg>
+    <!-- Steal Buttons and Defense Ratings -->
+    <div class="button-slot" style="top: 15%; left: 40%;">
+      <button v-if="canSteal && bases.second" @click="emit('attempt-steal', 2)" class="steal-button">Steal 3rd</button>
+    </div>
+    <div class="button-slot" style="top: 75%; left: 65%;">
+      <button v-if="canSteal && bases.first" @click="emit('attempt-steal', 1)" class="steal-button">Steal 2nd</button>
+    </div>
+    <div class="button-slot" style="top: 75%; left: 20%;">
+      <div v-if="canSteal || atBatStatus === 'defensive-steal-throw'" class="defense-rating">
+          Catcher Arm: {{ catcherArm >= 0 ? '+' : '' }}{{ catcherArm }}
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.diamond-container { width: 200px; height: 200px; margin: 1rem auto; }
-.grass { fill: #6b8e23; }
-.base-path { fill: #c2b280; stroke: #a08f65; stroke-width: 1; }
-.base { fill: white; }
-.runner { fill: #007bff; stroke: white; stroke-width: 0.5; }
-.runner-text { font-size: 5px; fill: white; text-anchor: middle; dominant-baseline: middle; font-weight: bold; }
-.runner-name { font-size: 5px; text-anchor: middle; }
-.runner-group button {
-    width: 100%;
-    height: 100%;
-    font-size: 4px;
-    padding: 0;
-    cursor: pointer;
+.diamond-container {
+  width: 100%;
+  max-width: 350px;
+  margin: 1rem auto;
+  aspect-ratio: 1 / 1;
+  position: relative; /* This is crucial for positioning children */
+  
+  /* THIS IS THE KEY CHANGE */
+  background-image: url('https://i.ibb.co/Jjy2kfhR/diamond-for-app.png');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.runner-slot {
+  position: absolute;
+  width: 90px; /* Adjust size of runner cards */
+  height: 126px;
+  transform: translate(-50%, -50%); /* Center the card on the coordinates */
+}
+
+.button-slot {
+  position: absolute;
+  width: 70px;
+  height: 25px;
+}
+
+.steal-button {
+    width: 100%; height: 100%; font-size: 10px; padding: 0;
+    cursor: pointer; background-color: #dc3545; color: white;
+    border: 1px solid #fff; border-radius: 3px;
+}
+.defense-rating {
+    width: 100%; height: 100%; background: rgba(0,0,0,0.6);
+    color: white; font-size: 10px; text-align: center;
+    border-radius: 2px; padding: 2px; box-sizing: border-box;
+    display: flex; align-items: center; justify-content: center;
 }
 </style>
+

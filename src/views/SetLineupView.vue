@@ -61,45 +61,29 @@ const isLineupValid = computed(() => {
   return true;
 });
 
+// in src/views/SetLineupView.vue
+
+// in SetLineupView.vue
 function autoPopulateLineup() {
-  const playersToOrder = [...positionPlayers.value].sort((a, b) => b.points - a.points);
-  const lineupSize = useDh.value ? 9 : 8;
-  const topPlayers = playersToOrder.slice(0, lineupSize);
+  const savedCards = authStore.activeRosterCards;
+  
+  // Filter to get only the players who were assigned to a lineup spot in the Roster Builder.
+  let lineupPlayers = savedCards.filter(card => 
+    card.assignment && card.assignment !== 'BENCH' && card.assignment !== 'PITCHING_STAFF'
+  );
 
-  let unassignedPlayers = [...topPlayers];
-  const assignments = []; // This will hold the player-position pairs
-  const positionPriority = defensivePositions.value;
-
-  // --- Phase 1: Assign Best Defensive Positions ---
-  positionPriority.forEach(pos => {
-    // Find the best player (highest points) in the unassigned list who can play this position
-    let bestPlayerIndex = -1;
-    for (let i = 0; i < unassignedPlayers.length; i++) {
-        if (isPlayerEligibleForPosition(unassignedPlayers[i], pos)) {
-            bestPlayerIndex = i;
-            break; // Found the best available player for this spot
-        }
-    }
-    
-    if (bestPlayerIndex !== -1) {
-        const player = unassignedPlayers[bestPlayerIndex];
-        assignments.push({ player: player, position: pos });
-        // Remove the assigned player from the pool
-        unassignedPlayers.splice(bestPlayerIndex, 1);
-    }
-  });
-
-  // If any players are left unassigned (e.g., not enough coverage), assign them to the remaining open spots
-  const assignedPositions = assignments.map(a => a.position);
-  const openPositions = positionPriority.filter(p => !assignedPositions.includes(p));
-  unassignedPlayers.forEach(player => {
-      if (openPositions.length > 0) {
-          assignments.push({ player: player, position: openPositions.shift() });
-      }
-  });
-
-  // --- Phase 2: Sort the Assigned Lineup by Points ---
-  const finalBattingOrder = assignments.sort((a, b) => b.player.points - a.player.points);
+  // --- THIS IS THE FIX ---
+  // If the "No DH" rule is in effect, find and remove the player assigned to the DH spot.
+  if (!useDh.value) {
+    lineupPlayers = lineupPlayers.filter(player => player.assignment !== 'DH');
+  }
+  
+  const initialLineup = lineupPlayers.map(player => ({
+    player: player,
+    position: player.assignment
+  }));
+  
+  const finalBattingOrder = initialLineup.sort((a, b) => b.player.points - a.player.points);
 
   battingOrder.value = finalBattingOrder;
 }
@@ -152,18 +136,27 @@ async function handleSubmission() {
     hasSubmitted.value = true; // Show the waiting message
 }
 
+// in SetLineupView.vue
 onMounted(async () => {
-  await gameStore.fetchGame(gameId);
+  console.log('1. SetLineupView has mounted for game ID:', gameId);
+  await gameStore.fetchGame(gameId); // Fetches basic game info like DH rule
+
   const participantInfo = await authStore.fetchMyParticipantInfo(gameId);
+  console.log('2. Fetched participant info:', participantInfo);
+
   if (participantInfo && participantInfo.roster_id) {
+    console.log('3. Roster ID found. Fetching roster details for:', participantInfo.roster_id);
     await authStore.fetchRosterDetails(participantInfo.roster_id);
+    console.log('4. Roster details fetch complete. Calling autoPopulateLineup...');
     autoPopulateLineup();
+  } else {
+    console.error('CRITICAL ERROR: No participant info or roster_id found for this game.');
   }
-  socket.connect();
-  socket.emit('join-game-room', gameId);
+
   socket.on('game-starting', () => {
-  console.log("--- FRONTEND: Received 'game-starting' event! Redirecting... ---");
-  router.push(`/game/${gameId}`);
+    // ADD THIS LOG
+    console.log("--- FRONTEND: Received 'game-starting' event! Redirecting... ---");
+    router.push(`/game/${gameId}`);
   });
 });
 

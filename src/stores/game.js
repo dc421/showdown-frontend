@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { useAuthStore } from './auth';
-import router from '@/router';
+const teams = ref({ home: null, away: null });
 
 export const useGameStore = defineStore('game', () => {
   const game = ref(null);
@@ -11,9 +11,12 @@ export const useGameStore = defineStore('game', () => {
   const pitcher = ref(null);
   const lineups = ref({ home: null, away: null });
   const rosters = ref({ home: [], away: [] });
+  const teams = ref({ home: null, away: null }); // <-- ADD THIS LINE
   const setupState = ref(null);
 
-  async function fetchGame(gameId) {
+// in src/stores/game.js
+// in src/stores/game.js
+async function fetchGame(gameId) {
     const auth = useAuthStore();
     if (!auth.token) return;
     try {
@@ -21,29 +24,9 @@ export const useGameStore = defineStore('game', () => {
         headers: { 'Authorization': `Bearer ${auth.token}` }
       });
       if (!response.ok) throw new Error('Failed to fetch game data');
+      
+      // The data from the server is now pre-processed and ready to use.
       const data = await response.json();
-      
-      const allRosterPlayers = [...(data.rosters.home || []), ...(data.rosters.away || [])];
-      const nameCounts = {};
-      allRosterPlayers.forEach(p => { nameCounts[p.name] = (nameCounts[p.name] || 0) + 1; });
-      const processPlayer = (p) => {
-        if (!p) return;
-        p.displayName = nameCounts[p.name] > 1 ? `${p.name} (${p.team})` : p.name;
-        if (p.control !== null) {
-          p.displayPosition = Number(p.ip) > 3 ? 'SP' : 'RP';
-        } else {
-          p.displayPosition = p.fielding_ratings ? Object.keys(p.fielding_ratings).join(',').replace(/LFRF/g, 'LF/RF') : 'DH';
-        }
-      };
-      
-      data.rosters.home.forEach(processPlayer);
-      data.rosters.away.forEach(processPlayer);
-      if (data.batter) processPlayer(data.batter);
-      if (data.pitcher) processPlayer(data.pitcher);
-      if (data.lineups.home?.battingOrder) data.lineups.home.battingOrder.forEach(spot => processPlayer(spot.player));
-      if (data.lineups.away?.battingOrder) data.lineups.away.battingOrder.forEach(spot => processPlayer(spot.player));
-      if (data.lineups.home?.startingPitcher) processPlayer(data.lineups.home.startingPitcher);
-      if (data.lineups.away?.startingPitcher) processPlayer(data.lineups.away.startingPitcher);
 
       game.value = data.game;
       gameState.value = data.gameState.state_data;
@@ -52,10 +35,11 @@ export const useGameStore = defineStore('game', () => {
       pitcher.value = data.pitcher;
       lineups.value = data.lineups;
       rosters.value = data.rosters;
+      teams.value = data.teams;
     } catch (error) {
       console.error(error);
     }
-  }
+}
 
   // in src/stores/game.js
 async function submitBaserunningDecisions(gameId, decisions) {
@@ -70,6 +54,24 @@ async function submitBaserunningDecisions(gameId, decisions) {
   } catch (error) { console.error("Error submitting decisions:", error); }
 }
 // Also, make sure `submitBaserunningDecisions` is in your return object at the end of the file.
+
+async function setGameState(gameId, partialState) {
+  const auth = useAuthStore();
+  if (!auth.token) return;
+  try {
+    await fetch(`${auth.API_URL}/api/dev/games/${gameId}/set-state`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${auth.token}`
+      },
+      body: JSON.stringify(partialState)
+    });
+    // The game-updated event will refresh the UI automatically
+  } catch (error) {
+    console.error("Error setting game state:", error);
+  }
+}
 
 async function resolveDefensiveThrow(gameId, throwTo) {
   const auth = useAuthStore();
@@ -222,38 +224,29 @@ async function resolveDefensiveThrow(gameId, throwTo) {
   }
 }
 
-// in src/stores/game.js
-async function initiateSteal(gameId) {
-  const auth = useAuthStore();
-  if (!auth.token) return;
-  try {
-    await fetch(`${auth.API_URL}/api/games/${gameId}/initiate-steal`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${auth.token}` },
-    });
-  } catch (error) {
-    console.error("Error initiating steal:", error);
+async function initiateSteal(gameId, fromBase) {
+    const auth = useAuthStore();
+    if (!auth.token) return;
+    try {
+      await fetch(`${auth.API_URL}/api/games/${gameId}/initiate-steal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth.token}` },
+        body: JSON.stringify({ fromBase })
+      });
+    } catch (error) { console.error("Error initiating steal:", error); }
   }
-}
-// Don't forget to add `initiateSteal` to your return object!
 
-async function attemptSteal(gameId, fromBase) {
-  const auth = useAuthStore();
-  if (!auth.token) return;
-  try {
-    await fetch(`${auth.API_URL}/api/games/${gameId}/steal`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${auth.token}`
-      },
-      body: JSON.stringify({ fromBase })
-    });
-    // The websocket event will handle the state update
-  } catch (error) {
-    console.error("Error attempting steal:", error);
+
+async function resolveSteal(gameId) {
+    const auth = useAuthStore();
+    if (!auth.token) return;
+    try {
+      await fetch(`${auth.API_URL}/api/games/${gameId}/resolve-steal`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${auth.token}` }
+      });
+    } catch (error) { console.error("Error resolving steal:", error); }
   }
-}
 
 // in src/stores/game.js
 async function submitInfieldInDecision(gameId, sendRunner) {
@@ -285,7 +278,7 @@ async function resetRolls(gameId) {
 
 
 
-  return { game, gameState, gameEvents, batter, pitcher, lineups, rosters, setupState, 
-    fetchGame, initiateSteal,submitPitch, submitSwing, fetchGameSetup, submitRoll, submitGameSetup,submitTagUp,
-    submitBaserunningDecisions,resolveDefensiveThrow,submitSubstitution, advanceRunners,setDefense,attemptSteal,submitInfieldInDecision,resetRolls };
+  return { game, gameState, gameEvents, batter, pitcher, lineups, rosters, setupState, teams,
+    fetchGame, setGameState,initiateSteal,resolveSteal,submitPitch, submitSwing, fetchGameSetup, submitRoll, submitGameSetup,submitTagUp,
+    submitBaserunningDecisions,resolveDefensiveThrow,submitSubstitution, advanceRunners,setDefense,submitInfieldInDecision,resetRolls };
 })

@@ -6,82 +6,92 @@ const props = defineProps({
   role: String,
   battingOrderPosition: Number,
   defensivePosition: String,
-  pitchResult: Object // <-- ADD THIS NEW PROP
+  pitchResult: Object,
+  hasAdvantage: {
+    type: Boolean,
+    default: null
+  },
+  // NEW: A prop to accept the team's primary color
+  primaryColor: {
+    type: String,
+    default: '#ffc107' // Default to gold if no color is provided
+  }
+});
+
+function handleImageError(event) {
+  event.target.src = 'https://via.placeholder.com/220x308/CCCCCC/FFFFFF?text=No+Image';
+}
+
+const fieldingDisplay = computed(() => {
+    if (!props.player?.fielding_ratings) return '';
+    return Object.entries(props.player.fielding_ratings)
+        .map(([pos, val]) => `${pos.replace(/LFRF/g, 'LF/RF')} ${val >= 0 ? '+' : ''}${val}`)
+        .join(', ');
 });
 
 function formatRange(range) {
   const parts = range.split('-');
   return parts[0] === parts[1] ? parts[0] : range;
 }
-
-// NEW: A computed property to create the detailed fielding string
-const fieldingDisplay = computed(() => {
-    if (!props.player?.fielding_ratings) return 'N/A';
-    return Object.entries(props.player.fielding_ratings)
-        .map(([pos, val]) => `${pos.replace(/LFRF/g, 'LF/RF')} ${val >= 0 ? '+' : ''}${val}`)
-        .join(', ');
-});
 </script>
 
 <template>
-  <div class="player-card" v-if="player">
-    <div class="card-header">
-      <h3 v-if="role === 'Batter' && defensivePosition !== undefined">
-        {{ battingOrderPosition + 1 }}. {{ defensivePosition }} {{ player.name }}
-      </h3>
-      <h3 v-else>{{ player.name }}</h3>
-      <span>{{ player.points }} pts</span>
-    </div>
-    <div class="card-body">
-      <p>
-        <strong>Team:</strong> {{ player.team }}
-        <span v-if="player.speed"> | <strong>Speed:</strong> {{ player.speed }}</span>
-      </p>
-      <div v-if="role === 'Batter'">
-        <p><strong>On-Base:</strong> <span class="key-stat">{{ player.on_base }}</span></p>
-        <p><strong>Fielding:</strong> {{ fieldingDisplay }}</p>
-      </div>
-      <div v-if="role === 'Pitcher'">
-      <p>
-        <strong>Control:</strong> 
-        <span class="key-stat">{{ player.control }}</span>
-        <span v-if="pitchResult?.penalty > 0" class="penalty">
-          (-{{ pitchResult.penalty }})
-        </span> 
-        | <strong>IP:</strong> {{ player.ip }}
-      </p>
-      </div>
-      <div class="chart">
-        <strong>Outcome Chart:</strong>
-        <ul>
-          <li v-for="(outcome, range) in player.chart_data" :key="range">
-            {{ formatRange(range) }}: {{ outcome }}
-          </li>
-        </ul>
-      </div>
-    </div>
+  <!-- This is the main container for the player card -->
+  <div 
+    class="player-card-container" 
+    :class="{ 
+      advantage: hasAdvantage === true, 
+      disadvantage: hasAdvantage === false 
+    }"
+    :style="{ '--advantage-color': primaryColor }"
+    v-if="player">
+    
+    <img 
+      :src="player.image_url" 
+      :alt="player.name" 
+      class="card-image"
+      @error="handleImageError"
+    />
   </div>
-  <div v-else class="player-card placeholder">
+  <div v-else class="player-card-container placeholder">
     <p>Loading {{ role }}...</p>
   </div>
 </template>
 
 <style scoped>
-.player-card { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 300px; }
-.placeholder { text-align: center; color: #888; }
-.card-header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid #eee; padding-bottom: 0.5rem; margin-bottom: 0.5rem; }
-.card-header h3 { margin: 0; font-size: 1.1em; }
-p { margin: 0.25rem 0; }
-.key-stat {
-    font-size: 1.5em;
-    font-weight: bold;
-    color: #007bff;
+.player-card-container {
+  width: 220px;
+  height: 308px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  overflow: hidden;
+  background-color: #e9ecef;
+  transition: all 0.3s ease-in-out;
+  border: 1px solid transparent;
 }
-.penalty {
-  color: red;
-  font-weight: bold;
-  margin-left: 0.25rem;
+.placeholder {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: #6c757d;
 }
-.chart { margin-top: 0.5rem; }
-.chart ul { list-style: none; padding: 0; margin-top: 0.5rem; font-size: 0.85em; column-count: 2; }
+.card-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; 
+  display: block;
+  filter: contrast(1.1) brightness(1.05);
+  transition: filter 0.3s ease-in-out;
+}
+
+/* NEW: The border and glow now use the CSS variable */
+.advantage {
+  border-color: var(--advantage-color);
+  box-shadow: 0 0 20px var(--advantage-color);
+}
+
+.disadvantage .card-image {
+  filter: grayscale(100%) contrast(1.1) brightness(1.05);
+}
 </style>
+

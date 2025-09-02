@@ -85,10 +85,10 @@ watch(diceRolls, () => {
     <h1>Game Setup</h1>
     <p class="subtitle">The winner of the dice roll will be the home team.</p>
     <div class="panel" v-if="participants.length > 0">
-
       <div class="participants">
           <div v-for="player in participants" :key="player.user_id" class="participant">
-              <span>{{ player.email }}</span>
+              <span><strong>{{ player.full_display_name }}</strong></span>
+              <img :src="player.logo_url" :alt="player.name" class="team-logo-small" />
               <span class="roll" v-if="diceRolls[player.user_id]">{{ diceRolls[player.user_id] }}</span>
           </div>
       </div>
@@ -98,8 +98,8 @@ watch(diceRolls, () => {
           <h2>1. Determine Home Team</h2>
           <p>Have one player declare or have both players roll.</p>
           <div class="declare-buttons">
-              <button @click="declareHomeTeam(participants[0])">{{ participants[0].email }} is Home</button>
-              <button @click="declareHomeTeam(participants[1])">{{ participants[1].email }} is Home</button>
+              <button @click="declareHomeTeam(participants[0])">{{ participants[0].city }} is Home</button>
+              <button @click="declareHomeTeam(participants[1])">{{ participants[1].city }} is Home</button>
           </div>
           <div class="roll-buttons">
             <button v-if="!iHaveRolled" @click="gameStore.submitRoll(gameId)">
@@ -113,7 +113,7 @@ watch(diceRolls, () => {
       <div class="setup-section" v-if="homeTeamUserId">
         <h2>2. Set DH Rule</h2>
         <div class="result">
-          <strong>Home Team:</strong> {{ participants.find(p => p.user_id === homeTeamUserId)?.email }}
+          <strong>Home Team:</strong> {{ participants.find(p => p.user_id === homeTeamUserId)?.city }}
         </div>
         <div v-if="isHomeTeam" class="dh-section">
           <p>As the home team, you decide the DH rule for this game.</p>
@@ -148,6 +148,12 @@ watch(diceRolls, () => {
   .result { margin-top: 1rem; font-size: 1.1rem; }
   .dh-section { margin-top: 1rem; }
   .dh-toggle label { margin-right: 1.5rem; }
+  .team-logo-small {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    margin-bottom: 0.5rem;
+}
   button { padding: 0.5rem 1rem; font-size: 0.9rem; cursor: pointer; border-radius: 4px; border: 1px solid #ccc; }
   .submit-btn { background-color: #28a745; color: white; border-color: #28a745; font-weight: bold; font-size: 1rem; margin-top: 1rem; }
   .submit-btn:disabled { background-color: #ccc; border-color: #ccc; cursor: not-allowed; }

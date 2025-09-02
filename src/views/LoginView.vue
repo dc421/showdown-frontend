@@ -15,7 +15,7 @@ async function handleLogin() {
 <template>
   <div id="app-container">
     <div class="login-form">
-      <h1>MLB Showdown</h1>
+      <img src="https://i.ibb.co/CKmxGGGw/showdown-logo.png" alt="MLB Showdown Logo" class="login-logo" />
       <form @submit.prevent="handleLogin">
         <div class="form-group">
           <label for="email">Email</label>
@@ -76,6 +76,11 @@ input {
   border: 1px solid #dddfe2;
   border-radius: 6px;
   box-sizing: border-box;
+}
+
+.login-logo {
+  max-width: 100%;
+  margin-bottom: 1.5rem;
 }
 
 button {

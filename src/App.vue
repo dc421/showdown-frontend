@@ -11,5 +11,9 @@ const authStore = useAuthStore();
 </template>
 
 <style>
-  /* You can add global styles here if you wish */
+  /* Global styles for the entire application */
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    margin: 0;
+  }
 </style>
