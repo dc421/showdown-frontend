@@ -76,7 +76,7 @@ onUnmounted(() => {
         <button @click="handleCreateGame" :disabled="!authStore.myRoster" class="action-btn">+ Create New Game</button>
         <ul v-if="authStore.myGames.length > 0" class="game-list">
             <li v-for="game in authStore.myGames" :key="game.game_id">
-                <RouterLink :to="game.status === 'pending' ? `/game/${game.game_id}/setup` : `/game/${game.game_id}`">
+                <RouterLink :to="game.status === 'pending' ? `/game/${game.game_id}/setup` : (game.status === 'lineups' ? `/game/${game.game_id}/lineup` : `/game/${game.game_id}`)">
                     <!-- This now displays the opponent's team name -->
                     <span v-if="game.opponent">vs. {{ game.opponent.city }}</span>
                     <span v-else>Waiting for opponent...</span>
@@ -127,7 +127,7 @@ onUnmounted(() => {
   padding: 0.5rem;
   box-shadow: 0 4px 8px rgba(0,0,0,0.3);
 }
-.team-info h1 { margin: 0; font-size: 2.5rem; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); }
+.team-info h1 { margin: 0; font-size: 2.5rem; }
 .team-info p { margin: 0; font-size: 1.2rem; opacity: 0.9; }
 .dashboard-main {
   display: grid;

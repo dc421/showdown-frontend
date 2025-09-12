@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 
 const props = defineProps({
   player: Object,
@@ -16,6 +16,12 @@ const props = defineProps({
     type: String,
     default: '#ffc107' // Default to gold if no color is provided
   }
+});
+
+watch(() => props.player, (newPlayer, oldPlayer) => {
+  const newName = newPlayer ? newPlayer.name : 'null';
+  const oldName = oldPlayer ? oldPlayer.name : 'null';
+  console.log(`--- 3. PlayerCard prop CHANGED from ${oldName} to ${newName} ---`);
 });
 
 function handleImageError(event) {

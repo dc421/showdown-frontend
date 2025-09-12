@@ -17,7 +17,8 @@ export const useGameStore = defineStore('game', () => {
 // in src/stores/game.js
 // in src/stores/game.js
 async function fetchGame(gameId) {
-    const auth = useAuthStore();
+    console.log(`--- 1. fetchGame STARTING for game ${gameId} ---`);
+  const auth = useAuthStore();
     if (!auth.token) return;
     try {
       const response = await fetch(`${auth.API_URL}/api/games/${gameId}`, {
@@ -27,7 +28,9 @@ async function fetchGame(gameId) {
       
       // The data from the server is now pre-processed and ready to use.
       const data = await response.json();
-
+// ADD THIS LOG
+      console.log('2. FRONTEND STORE: Raw state from server. atBatStatus is:', data.gameState?.state_data?.atBatStatus);
+      
       game.value = data.game;
       gameState.value = data.gameState.state_data;
       gameEvents.value = data.gameEvents;
@@ -36,6 +39,7 @@ async function fetchGame(gameId) {
       lineups.value = data.lineups;
       rosters.value = data.rosters;
       teams.value = data.teams;
+  console.log(`--- 4. fetchGame FINISHED. Store is updated. ---`);
     } catch (error) {
       console.error(error);
     }
@@ -136,6 +140,8 @@ async function resolveDefensiveThrow(gameId, throwTo) {
   }
 
   async function submitGameSetup(gameId, setupData) {
+    console.log('2. Game Store: submitGameSetup action was called.');
+      console.log(' -> Data being sent:', setupData); // <-- ADD THIS LOG
     const auth = useAuthStore();
     if (!auth.token) return;
     try {
@@ -151,7 +157,8 @@ async function resolveDefensiveThrow(gameId, throwTo) {
     }
   }
 
-  async function submitPitch(gameId, action = null) {
+async function submitPitch(gameId, action = null) {
+  console.log('2. Game Store: submitPitch action was called.');
   const auth = useAuthStore();
   if (!auth.token) return;
   try {
@@ -162,8 +169,21 @@ async function resolveDefensiveThrow(gameId, throwTo) {
     });
   } catch (error) { console.error('Error submitting pitch:', error); }
 }
-  
-  async function submitSwing(gameId, action = null) {
+
+// in src/stores/game.js
+async function submitAction(gameId, action) {
+  const auth = useAuthStore();
+  if (!auth.token) return;
+  try {
+    await fetch(`${auth.API_URL}/api/games/${gameId}/set-action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth.token}` },
+      body: JSON.stringify({ action })
+    });
+  } catch (error) { console.error("Error setting offensive action:", error); }
+}
+
+async function submitSwing(gameId, action = null) {
   const auth = useAuthStore();
   if (!auth.token) return;
   try {
@@ -190,6 +210,36 @@ async function resolveDefensiveThrow(gameId, throwTo) {
       alert(`Error: ${error.message}`);
     }
   }
+
+  async function nextHitter(gameId) {
+  const auth = useAuthStore();
+  if (!auth.token) return;
+  try {
+    await fetch(`${auth.API_URL}/api/games/${gameId}/next-hitter`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${auth.token}` }
+    });
+  } catch (error) { console.error("Error advancing to next hitter:", error); }
+}
+
+// in src/stores/game.js
+
+async function declareHomeTeam(gameId, homeTeamUserId) {
+  const auth = useAuthStore();
+  if (!auth.token) return;
+  try {
+    // This sends the choice to your new backend endpoint
+    await fetch(`${auth.API_URL}/api/games/${gameId}/declare-home`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${auth.token}` },
+      body: JSON.stringify({ homeTeamUserId })
+    });
+    // The websocket event will handle the UI update for the other player
+  } catch (error) {
+    console.error("Error declaring home team:", error);
+  }
+}
+
 
   async function advanceRunners(gameId, decisions) {
   console.log('2. advanceRunners action called in the store.');
@@ -279,6 +329,6 @@ async function resetRolls(gameId) {
 
 
   return { game, gameState, gameEvents, batter, pitcher, lineups, rosters, setupState, teams,
-    fetchGame, setGameState,initiateSteal,resolveSteal,submitPitch, submitSwing, fetchGameSetup, submitRoll, submitGameSetup,submitTagUp,
-    submitBaserunningDecisions,resolveDefensiveThrow,submitSubstitution, advanceRunners,setDefense,submitInfieldInDecision,resetRolls };
+    fetchGame, declareHomeTeam,setGameState,initiateSteal,resolveSteal,submitPitch, submitSwing, fetchGameSetup, submitRoll, submitGameSetup,submitTagUp,
+    submitBaserunningDecisions,submitAction,nextHitter,resolveDefensiveThrow,submitSubstitution, advanceRunners,setDefense,submitInfieldInDecision,resetRolls };
 })

@@ -215,19 +215,31 @@ async function joinGame(gameId, rosterId) {
   }
 }
 
-  // In src/stores/auth.js
+// in src/stores/auth.js
 async function fetchRosterDetails(rosterId) {
   if (!token.value) return;
   try {
+    // This is new: Ensure the master player list is available for context.
+    if (allPlayers.value.length === 0) {
+      await fetchAllPlayers();
+    }
+
     const response = await fetch(`${API_URL}/api/rosters/${rosterId}`, {
       headers: { 'Authorization': `Bearer ${token.value}` }
     });
     if (!response.ok) throw new Error('Failed to fetch roster details');
     const rosterPlayers = await response.json();
-    console.log('4. Received roster details from server:', rosterPlayers);
-    
-    // Corrected logic to build the display position string
+
+    // This is new: Create a map of name counts from the master list.
+    const nameCounts = {};
+    allPlayers.value.forEach(p => { nameCounts[p.name] = (nameCounts[p.name] || 0) + 1; });
+
+    // Process each player on the active roster
     rosterPlayers.forEach(p => {
+      // THIS IS THE FIX: Add the displayName property.
+      p.displayName = nameCounts[p.name] > 1 ? `${p.name} (${p.team})` : p.name;
+      
+      // Keep the existing logic for displayPosition.
       if (p.control !== null) {
         p.displayPosition = Number(p.ip) > 3 ? 'SP' : 'RP';
       } else {
@@ -238,9 +250,10 @@ async function fetchRosterDetails(rosterId) {
 
     activeRosterCards.value = rosterPlayers;
   } catch (error) {
-    console.error(error);
+    console.error('Failed to fetch roster details:', error);
   }
 }
+
 
   // in src/stores/auth.js
 async function submitLineup(gameId, lineupData) {

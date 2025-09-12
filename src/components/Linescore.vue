@@ -2,15 +2,14 @@
 import { computed } from 'vue';
 import { useGameStore } from '@/stores/game';
 
+// This component now gets all its data directly from the game store.
 const gameStore = useGameStore();
-// We no longer need to define props, as this component is now self-sufficient.
 
+// It no longer needs to define or receive props.
+// in Linescore.vue
 const linescore = computed(() => {
   const innings = Array.from({ length: Math.max(9, gameStore.gameState?.inning || 0) }, (_, i) => i + 1);
-  const scores = {
-    away: { runs: [] },
-    home: { runs: [] },
-  };
+  const scores = { away: [], home: [] };
 
   if (!gameStore.gameEvents || !gameStore.gameState) {
     return { innings, scores };
@@ -19,26 +18,37 @@ const linescore = computed(() => {
   let awayRunsInInning = 0;
   let homeRunsInInning = 0;
   let isTop = true;
+  let inningMarkersFound = 0;
 
   gameStore.gameEvents.forEach(event => {
-    if (event.log_message.includes('---')) { // Inning change marker
-      if (isTop) { scores.away.runs.push(awayRunsInInning); } 
-      else { scores.home.runs.push(homeRunsInInning); }
-      awayRunsInInning = 0;
-      homeRunsInInning = 0;
-      isTop = event.log_message.includes('Top');
-    }
-    if (event.log_message.includes('scores!')) {
-      if (isTop) { awayRunsInInning++; } 
-      else { homeRunsInInning++; }
+    if (typeof event.log_message === 'string') {
+        if (event.log_message.includes('---')) {
+          // Only push the previous inning's score AFTER the first inning has started.
+          if (inningMarkersFound > 0) {
+              if (isTop) { scores.away.push(awayRunsInInning); }
+              else { scores.home.push(homeRunsInInning); }
+          }
+          inningMarkersFound++;
+          awayRunsInInning = 0;
+          homeRunsInInning = 0;
+          isTop = event.log_message.includes('Top');
+        }
+        if (event.log_message.includes('scores!')) {
+          if (isTop) { awayRunsInInning++; }
+          else { homeRunsInInning++; }
+        }
     }
   });
   
+  // Add the score for the current, in-progress inning.
   if (isTop) {
-    scores.away.runs.push(awayRunsInInning);
+    scores.away.push(awayRunsInInning);
   } else {
-     scores.away.runs.push(awayRunsInInning);
-     scores.home.runs.push(homeRunsInInning);
+    // If it's the bottom of an inning, we may need to backfill the away score.
+    if(scores.away.length === scores.home.length) {
+       scores.away.push(awayRunsInInning);
+    }
+    scores.home.push(homeRunsInInning);
   }
 
   return { innings, scores };
@@ -62,11 +72,11 @@ const homeTeamAbbr = computed(() => gameStore.teams?.home?.abbreviation || 'HOME
         <tr>
           <td>{{ awayTeamAbbr }}</td>
           <td 
-            v-for="(run, index) in linescore.scores.away.runs" 
+            v-for="(run, index) in linescore.scores.away" 
             :key="`away-${index}`"
             :class="{ 'current-inning': gameStore.gameState.isTopInning && (index + 1) === gameStore.gameState.inning }"
           >{{ run }}</td>
-          <td v-for="i in linescore.innings.length - linescore.scores.away.runs.length" :key="`away-empty-${i}`"></td>
+          <td v-for="i in linescore.innings.length - linescore.scores.away.length" :key="`away-empty-${i}`"></td>
           <td>{{ gameStore.gameState.awayScore }}</td>
           <td>
             <span v-if="gameStore.gameState.isTopInning">{{ gameStore.gameState.outs }}</span>
@@ -75,11 +85,11 @@ const homeTeamAbbr = computed(() => gameStore.teams?.home?.abbreviation || 'HOME
         <tr>
           <td>{{ homeTeamAbbr }}</td>
           <td 
-            v-for="(run, index) in linescore.scores.home.runs" 
+            v-for="(run, index) in linescore.scores.home" 
             :key="`home-${index}`"
             :class="{ 'current-inning': !gameStore.gameState.isTopInning && (index + 1) === gameStore.gameState.inning }"
           >{{ run }}</td>
-          <td v-for="i in linescore.innings.length - linescore.scores.home.runs.length" :key="`home-empty-${i}`"></td>
+          <td v-for="i in linescore.innings.length - linescore.scores.home.length" :key="`home-empty-${i}`"></td>
           <td>{{ gameStore.gameState.homeScore }}</td>
           <td>
             <span v-if="!gameStore.gameState.isTopInning">{{ gameStore.gameState.outs }}</span>
@@ -90,7 +100,6 @@ const homeTeamAbbr = computed(() => gameStore.teams?.home?.abbreviation || 'HOME
 </template>
 
 <style scoped>
-/* All styles are the same as the last working version */
 .linescore-table {
   color: white;
   font-family: monospace;
@@ -118,10 +127,11 @@ const homeTeamAbbr = computed(() => gameStore.teams?.home?.abbreviation || 'HOME
 }
 .linescore-table tr td:last-child {
   font-weight: bold;
-  color: #dc3545;
+  color: #dc3545; /* Red for outs */
 }
 .current-inning {
   color: #ffc107;
   font-weight: bold;
 }
 </style>
+

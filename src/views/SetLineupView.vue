@@ -177,11 +177,11 @@ onUnmounted(() => {
           <div class="player-list">
             <h3>Position Players ({{ positionPlayers.length }})</h3>
             <div v-for="p in availableBatters" :key="p.card_id" class="player-item" @click="addToLineup(p)">
-              {{ p.name }} ({{ p.displayPosition }})
+              {{ p.displayName }} ({{ p.displayPosition }})
             </div>
             <h3>Starting Pitchers ({{ startingPitchers.length }})</h3>
             <div v-for="p in startingPitchers" :key="p.card_id" class="player-item">
-              {{ p.name }} (SP)
+              {{ p.displayName }} (SP)
             </div>
           </div>
         </div>
@@ -190,13 +190,13 @@ onUnmounted(() => {
           <select v-model="startingPitcher" class="pitcher-select">
             <option :value="null" disabled>Select an SP...</option>
             <option v-for="p in startingPitchers" :key="p.card_id" :value="p">
-              {{ p.name }}
+              {{ p.displayName }}
             </option>
           </select>
           <h2>Batting Order ({{ battingOrder.length }} / 9)</h2>
           <div class="lineup-slots">
             <div v-for="(spot, index) in battingOrder" :key="spot.player.card_id" class="lineup-item">
-              <span>{{ index + 1 }}. {{ spot.player.name }}</span>
+              <span>{{ index + 1 }}. {{ spot.player.displayName }}</span>
               <div>
                 <select v-model="spot.position" 
                   :class="{ 

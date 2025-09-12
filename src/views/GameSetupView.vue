@@ -23,6 +23,8 @@ const bothPlayersHaveRolled = computed(() => participants.value.length > 0 && Ob
 const isHomeTeam = computed(() => authStore.user?.userId === homeTeamUserId.value);
 const setupComplete = computed(() => homeTeamUserId.value !== null);
 
+
+
 function determineRollWinner() {
   if (!bothPlayersHaveRolled.value) return;
   const [playerA, playerB] = participants.value;
@@ -43,12 +45,12 @@ function determineRollWinner() {
 }
 
 function declareHomeTeam(homePlayer) {
-    const newHomeId = homePlayer.user_id;
-    homeTeamUserId.value = newHomeId;
-    socket.emit('choice-made', { gameId, homeTeamUserId: newHomeId });
+    console.log('1. FRONTEND: declareHomeTeam called. Calling store action...');
+    gameStore.declareHomeTeam(gameId, homePlayer.user_id);
 }
 
 async function submitSetup() {
+  console.log('1. GameSetupView: submitSetup function was called.');
   if (!setupComplete.value) return;
   await gameStore.submitGameSetup(gameId, {
     homeTeamUserId: homeTeamUserId.value,
@@ -56,16 +58,25 @@ async function submitSetup() {
   });
 }
 
-onMounted(() => {
-  gameStore.fetchGameSetup(gameId);
+onMounted(async () => {
+  await gameStore.fetchGameSetup(gameId);
+
+  if (gameStore.setupState?.homeTeamUserId) {
+    homeTeamUserId.value = gameStore.setupState.homeTeamUserId;
+    if (gameStore.setupState.useDh !== null) {
+      useDh.value = gameStore.setupState.useDh;
+    }
+  }
+
+  // Listen for all real-time updates from the other player
   socket.connect();
   socket.emit('join-game-room', gameId);
   socket.on('roll-updated', () => gameStore.fetchGameSetup(gameId));
-  socket.on('setup-complete', () => router.push(`/game/${gameId}/lineup`));
-  
-  // ADD THESE TWO LISTENERS
   socket.on('choice-updated', (data) => { homeTeamUserId.value = data.homeTeamUserId; });
   socket.on('dh-rule-updated', (data) => { useDh.value = data.useDh; });
+  socket.on('setup-complete', () => {
+    router.push(`/game/${gameId}/lineup`);
+  });
 });
 
 onUnmounted(() => {
@@ -79,6 +90,13 @@ watch(diceRolls, () => {
     }
 }, { deep: true });
 </script>
+
+watch(useDh, (newValue) => {
+  // When the home team changes the DH rule, notify the server
+  if (isHomeTeam.value) {
+    socket.emit('dh-rule-changed', { gameId, useDh: newValue });
+  }
+});
 
 <template>
   <div class="container">
