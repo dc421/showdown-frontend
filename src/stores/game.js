@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { useAuthStore } from './auth';
+
 const teams = ref({ home: null, away: null });
 
 export const useGameStore = defineStore('game', () => {
@@ -17,7 +18,6 @@ export const useGameStore = defineStore('game', () => {
 // in src/stores/game.js
 // in src/stores/game.js
 async function fetchGame(gameId) {
-    console.log(`--- 1. fetchGame STARTING for game ${gameId} ---`);
   const auth = useAuthStore();
     if (!auth.token) return;
     try {
@@ -29,7 +29,9 @@ async function fetchGame(gameId) {
       // The data from the server is now pre-processed and ready to use.
       const data = await response.json();
 // ADD THIS LOG
-      console.log('2. FRONTEND STORE: Raw state from server. atBatStatus is:', data.gameState?.state_data?.atBatStatus);
+      // --- ADD THIS CRITICAL LOG ---
+      console.log(`📥 STORE: Received raw data from server for game ${gameId}. Are events here?`, data.gameEvents);
+      
       
       game.value = data.game;
       gameState.value = data.gameState.state_data;
@@ -326,9 +328,17 @@ async function resetRolls(gameId) {
   }
 }
 
+// --- ADD THIS LINE ---
+  const displayOuts = ref(0);
+
+  // --- ADD THIS ACTION ---
+  function setDisplayOuts(count) {
+    displayOuts.value = count;
+  }
 
 
   return { game, gameState, gameEvents, batter, pitcher, lineups, rosters, setupState, teams,
     fetchGame, declareHomeTeam,setGameState,initiateSteal,resolveSteal,submitPitch, submitSwing, fetchGameSetup, submitRoll, submitGameSetup,submitTagUp,
+    displayOuts, setDisplayOuts,
     submitBaserunningDecisions,submitAction,nextHitter,resolveDefensiveThrow,submitSubstitution, advanceRunners,setDefense,submitInfieldInDecision,resetRolls };
 })

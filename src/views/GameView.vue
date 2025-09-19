@@ -269,6 +269,21 @@ const atBatToDisplay = computed(() => {
     return gameStore.gameState.currentAtBat;
 });
 
+const nextBatterInLineup = computed(() => {
+  if (!gameStore.gameState || !gameStore.lineups) return null;
+
+  const isTop = gameStore.gameState.isTopInning;
+  const offensiveTeamState = isTop ? gameStore.gameState.awayTeam : gameStore.gameState.homeTeam;
+  const offensiveLineup = isTop ? gameStore.lineups.away.battingOrder : gameStore.lineups.home.battingOrder;
+
+  if (!offensiveLineup) return null;
+
+  // Calculate the index of the next batter in the order
+  const nextIndex = (offensiveTeamState.battingOrderPosition + 1) % 9;
+  
+  return offensiveLineup[nextIndex]?.player;
+});
+
 const batterToDisplay = computed(() => {
   if (!gameStore.gameState) {
         return null;
@@ -288,6 +303,16 @@ const pitcherToDisplay = computed(() => {
     return gameStore.gameState.currentAtBat.pitcher;
 });
 
+const gameStateToDisplay = computed(() => {
+  // If I am viewing the outcome of the last play, show the game state as it was
+  // at the end of that play, which is stored in lastCompletedAtBat.
+  if (showOutcomeReveal.value && !amIReadyForNext.value && gameStore.gameState.lastCompletedAtBat) {
+    return gameStore.gameState.lastCompletedAtBat;
+  }
+  // Otherwise, show the live, current game state.
+  return gameStore.gameState;
+});
+
 const haveIRolledForSwing = ref(false);
 
 // in GameView.vue
@@ -300,43 +325,67 @@ const showResolvedState = computed(() => {
 // in GameView.vue
 const gameEventsToDisplay = computed(() => {
   if (!gameStore.gameEvents) return [];
-  const showAllEvents = !(gameStore.gameState.currentAtBat?.batterAction && gameStore.gameState.currentAtBat?.pitcherAction && !haveIRolledForSwing.value && amIOffensivePlayer.value);
-
+  const showAllEvents = !(amIOffensivePlayer && (!haveIRolledForSwing && !amIReadyForNext) || (gameStore.gameState.currentAtBat.batterAction && gameStore.gameState.currentAtBat.pitcherAction))
+  
   // If the at-bat is resolved for me, show all events.
   if (showAllEvents) {
     return gameStore.gameEvents;
   }
 
-  // Otherwise, find the last "inning change" event.
-  let lastInningChangeIndex = -1;
-  for (let i = gameStore.gameEvents.length - 1; i >= 0; i--) {
-    if (gameStore.gameEvents[i].log_message?.includes('---')) {
-      lastInningChangeIndex = i;
-      break;
-    }
-  }
-  
-  // Return all events UP TO the current at-bat's events.
-  return gameStore.gameEvents.slice(0, lastInningChangeIndex + 1);
+  const eventCount = gameStore.gameState.currentAtBat?.swingRollResult?.eventCount || 0;
+  return gameStore.gameEvents.slice(0, gameStore.gameEvents.length - eventCount);
 });
 
 // in GameView.vue
 const basesToDisplay = computed(() => {
-  // First, determine if we are in the special state where one player has
-  // advanced but the other has not.
-  const showLastAtBatState = (gameStore.gameState.currentAtBat?.batterAction && gameStore.gameState.currentAtBat?.pitcherAction && !haveIRolledForSwing.value && amIOffensivePlayer.value)
+
+  if (!gameStore.gameEvents) return [];
+  const showAllEvents = !(gameStore.gameState.currentAtBat?.batterAction && gameStore.gameState.currentAtBat?.pitcherAction && !haveIRolledForSwing.value && amIOffensivePlayer.value);
+
+  // If the at-bat is resolved for me, show all events.
+  if (showAllEvents) {
+    return gameStore.gameState.bases;
+  }
+
+
+  // Otherwise, I'm viewing the last outcome, so show the bases from that completed play.
+  return gameStore.gameState.lastCompletedAtBat?.bases || gameStore.gameState.bases;
+});
+
+const outsToDisplay = computed(() => {
+  // This condition determines if the current user is viewing the outcome of a completed play
+  const showLastAtBatState = (
+    gameStore.gameState?.currentAtBat?.batterAction && 
+    gameStore.gameState?.currentAtBat?.pitcherAction && 
+    !haveIRolledForSwing.value && 
+    amIOffensivePlayer.value
+  );
 
   if (showLastAtBatState) {
-    // If we are in that state, try to show the bases from the last completed play.
-    // THIS IS THE FIX: If lastCompletedAtBat doesn't exist yet (i.e., it's the
-    // first at-bat of the game), we fall back to a guaranteed empty bases object.
-    return gameStore.gameState.lastCompletedAtBat?.bases || { first: null, second: null, third: null };
+    // If we are viewing a past play's outcome...
+    if (gameStore.gameState.lastCompletedAtBat) {
+      // ...and a record for that play exists, use the 'outs' count from it.
+      // This handles every at-bat after the first one.
+      return gameStore.gameState.lastCompletedAtBat.outs;
+    } else {
+      // ...but no record exists, it MUST be the first play of the game.
+      // In this specific case, the number of outs BEFORE this play was always 0.
+      return 0;
+    }
   }
   
-  // In all other cases, we are in sync with the server, so we show the
-  // current, live state of the bases.
-  return gameStore.gameState.bases;
+  // If we are not viewing a past play, we are viewing the live game state.
+  // Return the current, live number of outs.
+  return gameStore.gameState?.outs;
 });
+
+// This watcher automatically updates the store whenever the correct number of outs changes
+watch(outsToDisplay, (newOuts) => {
+  if (newOuts !== null && newOuts !== undefined) {
+    gameStore.setDisplayOuts(newOuts);
+  }
+}, { immediate: true }); // 'immediate' runs the watcher once on component load
+
 
 function hexToRgba(hex, alpha = 1) {
   if (!hex || !/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) {
@@ -541,8 +590,8 @@ onUnmounted(() => {
     </div>
             <div class="vs">VS</div>
             <div class="action-box">
-                <button v-if="amIOffensivePlayer && !gameStore.gameState.currentAtBat.batterAction" class="action-button tactile-button" @click="handleOffensiveAction('swing')">Swing Away</button>
-                <button v-else-if="amIOffensivePlayer && !haveIRolledForSwing && !amIReadyForNext && gameStore.gameState.currentAtBat.batterAction && gameStore.gameState.currentAtBat.pitcherAction" class="action-button tactile-button" @click="handleSwing()"><strong>ROLL FOR SWING </strong></button>
+                <button v-if="amIOffensivePlayer && !gameStore.gameState.currentAtBat.batterAction  && !gameStore.gameState.awayPlayerReadyForNext && !gameStore.gameState.homePlayerReadyForNext" class="action-button tactile-button" @click="handleOffensiveAction('swing')">Swing Away</button>
+                <button v-else-if="amIOffensivePlayer && (!haveIRolledForSwing && !amIReadyForNext) || (gameStore.gameState.currentAtBat.batterAction && gameStore.gameState.currentAtBat.pitcherAction)" class="action-button tactile-button" @click="handleSwing()"><strong>ROLL FOR SWING </strong></button>
                 <div v-else-if="atBatToDisplay.swingRollResult && showSwingResultWithDelay" class="result-box swing-result" :style="{ backgroundColor: hexToRgba(batterTeamColors.primary, 0.25), borderColor: hexToRgba(batterTeamColors.secondary, 0.25) }">
                     Swing: <strong>{{ atBatToDisplay.swingRollResult.roll }}</strong><br>
                     <strong class="outcome-text">{{ atBatToDisplay.swingRollResult.outcome }}</strong>
@@ -569,7 +618,7 @@ onUnmounted(() => {
         <div v-if="showSetActions">
             <div class="button-group">
                 <button v-if="amIDefensivePlayer && !gameStore.gameState.currentAtBat.pitcherAction && !(!amIReadyForNext && (gameStore.gameState.awayPlayerReadyForNext || gameStore.gameState.homePlayerReadyForNext))" class="tactile-button" @click="handlePitch('intentional_walk')">Intentional Walk</button>
-                <button v-if="amIOffensivePlayer && !gameStore.gameState.currentAtBat.batterAction" class="tactile-button" @click="handleOffensiveAction('bunt')">Bunt</button>
+                <button v-if="amIOffensivePlayer && !gameStore.gameState.currentAtBat.batterAction  && !gameStore.gameState.awayPlayerReadyForNext && !gameStore.gameState.homePlayerReadyForNext" class="tactile-button" @click="handleOffensiveAction('bunt')">Bunt</button>
             </div>
         </div>
 

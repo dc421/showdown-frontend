@@ -20,7 +20,7 @@ const isGamePage = computed(() => route.name === 'game');
     
     <div class="nav-center">
       <!-- This component is now much simpler. It just needs to be shown. -->
-      <Linescore v-if="isGamePage && gameStore.gameState" />
+      <Linescore v-if="isGamePage && gameStore.gameState && gameStore.gameEvents.length > 0" />
     </div>
 
     <div class="nav-right">

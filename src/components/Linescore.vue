@@ -2,15 +2,14 @@
 import { computed } from 'vue';
 import { useGameStore } from '@/stores/game';
 
-// This component now gets all its data directly from the game store.
 const gameStore = useGameStore();
 
-// It no longer needs to define or receive props.
-// in Linescore.vue
 const linescore = computed(() => {
+  // Use the direct store state: gameState, not gameStateToDisplay
   const innings = Array.from({ length: Math.max(9, gameStore.gameState?.inning || 0) }, (_, i) => i + 1);
   const scores = { away: [], home: [] };
 
+  // Use the direct store state: gameEvents, not gameEventsToDisplay
   if (!gameStore.gameEvents || !gameStore.gameState) {
     return { innings, scores };
   }
@@ -20,12 +19,16 @@ const linescore = computed(() => {
   let isTop = true;
   let inningMarkersFound = 0;
 
+  // Use the direct store state: gameEvents, not gameEventsToDisplay
   gameStore.gameEvents.forEach(event => {
     if (typeof event.log_message === 'string') {
-        if (event.log_message.includes('---')) {
-          // Only push the previous inning's score AFTER the first inning has started.
+        if (event.log_message.includes('scores!')) {
+          if (isTop) { awayRunsInInning++; } 
+          else { homeRunsInInning++; }
+        }
+        else if (event.log_message.includes('---')) {
           if (inningMarkersFound > 0) {
-              if (isTop) { scores.away.push(awayRunsInInning); }
+              if (isTop) { scores.away.push(awayRunsInInning); } 
               else { scores.home.push(homeRunsInInning); }
           }
           inningMarkersFound++;
@@ -33,18 +36,12 @@ const linescore = computed(() => {
           homeRunsInInning = 0;
           isTop = event.log_message.includes('Top');
         }
-        if (event.log_message.includes('scores!')) {
-          if (isTop) { awayRunsInInning++; }
-          else { homeRunsInInning++; }
-        }
     }
   });
   
-  // Add the score for the current, in-progress inning.
   if (isTop) {
     scores.away.push(awayRunsInInning);
   } else {
-    // If it's the bottom of an inning, we may need to backfill the away score.
     if(scores.away.length === scores.home.length) {
        scores.away.push(awayRunsInInning);
     }
@@ -74,25 +71,26 @@ const homeTeamAbbr = computed(() => gameStore.teams?.home?.abbreviation || 'HOME
           <td 
             v-for="(run, index) in linescore.scores.away" 
             :key="`away-${index}`"
-            :class="{ 'current-inning': gameStore.gameState.isTopInning && (index + 1) === gameStore.gameState.inning }"
+            :class="{ 'current-inning': gameStore.gameState?.isTopInning && (index + 1) === gameStore.gameState?.inning }"
           >{{ run }}</td>
           <td v-for="i in linescore.innings.length - linescore.scores.away.length" :key="`away-empty-${i}`"></td>
-          <td>{{ gameStore.gameState.awayScore }}</td>
+          <td>{{ gameStore.gameState?.awayScore }}</td>
           <td>
-            <span v-if="gameStore.gameState.isTopInning">{{ gameStore.gameState.outs }}</span>
+          <span v-if="gameStore.gameState?.isTopInning">{{ gameStore.displayOuts }}</span>
           </td>
+
         </tr>
         <tr>
           <td>{{ homeTeamAbbr }}</td>
           <td 
             v-for="(run, index) in linescore.scores.home" 
             :key="`home-${index}`"
-            :class="{ 'current-inning': !gameStore.gameState.isTopInning && (index + 1) === gameStore.gameState.inning }"
+            :class="{ 'current-inning': !gameStore.gameState?.isTopInning && (index + 1) === gameStore.gameState?.inning }"
           >{{ run }}</td>
           <td v-for="i in linescore.innings.length - linescore.scores.home.length" :key="`home-empty-${i}`"></td>
-          <td>{{ gameStore.gameState.homeScore }}</td>
+          <td>{{ gameStore.gameState?.homeScore }}</td>
           <td>
-            <span v-if="!gameStore.gameState.isTopInning">{{ gameStore.gameState.outs }}</span>
+            <span v-if="!gameStore.gameState?.isTopInning">{{ gameStore.displayOuts }}</span>
           </td>
         </tr>
       </tbody>

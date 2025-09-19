@@ -66,7 +66,14 @@ function formatRange(range) {
 
 <style scoped>
 .player-card-container {
-  width: 220px;
+  /* This allows the card to shrink with the screen */
+  width: 100%;
+  max-width: 220px; /* It won't grow larger than this */
+  
+  /* This automatically calculates the height to maintain the card's shape */
+  aspect-ratio: 220 / 308;
+
+  position: relative;
   height: 308px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   border-radius: 12px;
