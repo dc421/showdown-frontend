@@ -126,6 +126,23 @@ const showSetActions = computed(() => atBatStatus.value === 'set-actions');
 const showPitchReveal = computed(() => atBatStatus.value === 'reveal-pitch');
 const showOutcomeReveal = computed(() => atBatStatus.value === 'reveal-outcome');
 
+// NEW: Centralized logic to determine if the current play's outcome should be hidden from the user.
+const shouldHidePlayOutcome = computed(() => {
+  // Scenario 1: The offensive player has not yet clicked "ROLL FOR SWING".
+  // Both actions are in, but the local `haveIRolledForSwing` flag is false.
+  const isOffenseWaitingToRoll = amIOffensivePlayer.value &&
+    gameStore.gameState.currentAtBat?.batterAction &&
+    gameStore.gameState.currentAtBat?.pitcherAction &&
+    !haveIRolledForSwing.value;
+
+  // Scenario 2: The defensive player is waiting for the 900ms reveal delay.
+  const isDefenseWaitingForReveal = amIDefensivePlayer.value &&
+    showOutcomeReveal.value &&
+    !showSwingResultWithDelay.value;
+
+  return isOffenseWaitingToRoll || isDefenseWaitingForReveal;
+});
+
 const offensiveChoiceMade = computed(() => !!gameStore.gameState?.currentAtBat?.batterAction);
 
 const canAttemptSteal = computed(() => {
@@ -325,57 +342,37 @@ const showResolvedState = computed(() => {
 // in GameView.vue
 const gameEventsToDisplay = computed(() => {
   if (!gameStore.gameEvents) return [];
-  const showAllEvents = !(amIOffensivePlayer && (!haveIRolledForSwing && !amIReadyForNext) || (gameStore.gameState.currentAtBat.batterAction && gameStore.gameState.currentAtBat.pitcherAction))
   
-  // If the at-bat is resolved for me, show all events.
-  if (showAllEvents) {
-    return gameStore.gameEvents;
+  // If the outcome should be hidden, slice the last few events from the log.
+  if (shouldHidePlayOutcome.value) {
+    const eventCount = gameStore.gameState.currentAtBat?.swingRollResult?.eventCount || 0;
+    return gameStore.gameEvents.slice(0, gameStore.gameEvents.length - eventCount);
   }
 
-  const eventCount = gameStore.gameState.currentAtBat?.swingRollResult?.eventCount || 0;
-  return gameStore.gameEvents.slice(0, gameStore.gameEvents.length - eventCount);
+  // Otherwise, show all events.
+  return gameStore.gameEvents;
 });
 
 // in GameView.vue
 const basesToDisplay = computed(() => {
-
-  if (!gameStore.gameEvents) return [];
-  const showAllEvents = !(gameStore.gameState.currentAtBat?.batterAction && gameStore.gameState.currentAtBat?.pitcherAction && !haveIRolledForSwing.value && amIOffensivePlayer.value);
-
-  // If the at-bat is resolved for me, show all events.
-  if (showAllEvents) {
-    return gameStore.gameState.bases;
+  // If the outcome should be hidden, show the bases from the *previous* completed at-bat.
+  if (shouldHidePlayOutcome.value) {
+    // This safely handles the first at-bat of the game where lastCompletedAtBat is null.
+    return gameStore.gameState.lastCompletedAtBat?.bases || { 1: null, 2: null, 3: null };
   }
 
-
-  // Otherwise, I'm viewing the last outcome, so show the bases from that completed play.
-  return gameStore.gameState.lastCompletedAtBat?.bases || gameStore.gameState.bases;
+  // Otherwise, show the current, live bases.
+  return gameStore.gameState.bases;
 });
 
 const outsToDisplay = computed(() => {
-  // This condition determines if the current user is viewing the outcome of a completed play
-  const showLastAtBatState = (
-    gameStore.gameState?.currentAtBat?.batterAction && 
-    gameStore.gameState?.currentAtBat?.pitcherAction && 
-    !haveIRolledForSwing.value && 
-    amIOffensivePlayer.value
-  );
-
-  if (showLastAtBatState) {
-    // If we are viewing a past play's outcome...
-    if (gameStore.gameState.lastCompletedAtBat) {
-      // ...and a record for that play exists, use the 'outs' count from it.
-      // This handles every at-bat after the first one.
-      return gameStore.gameState.lastCompletedAtBat.outs;
-    } else {
-      // ...but no record exists, it MUST be the first play of the game.
-      // In this specific case, the number of outs BEFORE this play was always 0.
-      return 0;
-    }
+  // If the outcome should be hidden, show the outs from the *previous* completed at-bat.
+  if (shouldHidePlayOutcome.value) {
+    // If there was no previous at-bat, the outs count was 0.
+    return gameStore.gameState.lastCompletedAtBat?.outs || 0;
   }
   
-  // If we are not viewing a past play, we are viewing the live game state.
-  // Return the current, live number of outs.
+  // Otherwise, show the current, live number of outs.
   return gameStore.gameState?.outs;
 });
 
@@ -607,7 +604,7 @@ onUnmounted(() => {
                     <div v-if="(amIDefensivePlayer && gameStore.gameState.currentAtBat.pitcherAction && !gameStore.gameState.currentAtBat.batterAction)" class="turn-indicator">
                 Waiting for swing...
             </div>
-            <div v-if="runScoredOnPlay && showNextHitterButton" class="score-update-flash">
+            <div v-if="runScoredOnPlay && !shouldHidePlayOutcome" class="score-update-flash">
       {{ scoreChangeMessage }}
     </div>
 
